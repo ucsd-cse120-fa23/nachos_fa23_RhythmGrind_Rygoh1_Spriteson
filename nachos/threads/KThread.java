@@ -275,6 +275,9 @@ public class KThread {
 		Machine.autoGrader().readyThread(this);
 	}
 
+	//flag to indicate whether join has been called before
+	private boolean joined = false;
+
 	/**
 	 * Waits for this thread to finish. If this thread is already finished,
 	 * return immediately. This method must only be called once; the second call
@@ -284,7 +287,19 @@ public class KThread {
 		Lib.debug(dbgThread, "Joining to thread: " + toString());
 
 		Lib.assertTrue(this != currentThread);
+		Lib.assertTrue(joined == false);
+		
+		if(this.status == statusFinished){
+			return
+		}
 
+		waitThread = currentThread;
+		while(this.status != statusFinished){
+			if(waitThread.status != statusBlocked){
+				waitThread.sleep();
+			}
+		}
+		waitThread.ready();
 	}
 
 	/**
@@ -408,6 +423,32 @@ public class KThread {
 	}
 
 	/**
+	 * Tests for join
+	 */
+	private static void joinTest1 () {
+	KThread child1 = new KThread( new Runnable () {
+		public void run() {
+		    System.out.println("I (heart) Nachos!");
+		}
+	    });
+	child1.setName("child1").fork();
+
+	// We want the child to finish before we call join.  Although
+	// our solutions to the problems cannot busy wait, our test
+	// programs can!
+
+	for (int i = 0; i < 5; i++) {
+	    System.out.println ("busy...");
+	    KThread.currentThread().yield();
+	}
+
+	child1.join();
+	System.out.println("After joining, child1 should be finished.");
+	System.out.println("is it? " + (child1.status == statusFinished));
+	Lib.assertTrue((child1.status == statusFinished), " Expected child1 to be finished.");
+    }
+
+	/**
 	 * Tests whether this module is working.
 	 */
 	public static void selfTest() {
@@ -415,6 +456,7 @@ public class KThread {
 
 		new KThread(new PingTest(1)).setName("forked thread").fork();
 		new PingTest(0).run();
+		joinTest1();
 	}
 
 	private static final char dbgThread = 't';
