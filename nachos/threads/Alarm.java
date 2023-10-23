@@ -1,11 +1,13 @@
 package nachos.threads;
-
+import java.util.PriorityQueue;
 import nachos.machine.*;
 
 /**
  * Uses the hardware timer to provide preemption, and to allow threads to sleep
  * until a certain time.
  */
+
+
 public class Alarm {
 	/**
 	 * Allocate a new Alarm. Set the machine's timer interrupt handler to this
@@ -14,7 +16,28 @@ public class Alarm {
 	 * <p>
 	 * <b>Note</b>: Nachos will not function correctly with more than one alarm.
 	 */
+	class ThreadTimePair implements Comparable<ThreadTimePair> {
+		KThread thread;
+		long wakeTime; // The time at which the thread should be woken up
+	
+		public ThreadTimePair(KThread thread, long wakeTime) {
+			this.thread = thread;
+			this.wakeTime = wakeTime;
+		}
+	
+		@Override
+		public int compareTo(ThreadTimePair other) {
+			return Long.compare(this.wakeTime, other.wakeTime);
+		}
+		
+		// Optionally, getters and setters can be added here for `thread` and `wakeTime`.
+	}
+	
+
+	private PriorityQueue<ThreadTimePair> queue;
+
 	public Alarm() {
+		queue = new PriorityQueue<>();
 		Machine.timer().setInterruptHandler(new Runnable() {
 			public void run() {
 				timerInterrupt();
@@ -30,6 +53,13 @@ public class Alarm {
 	 */
 	public void timerInterrupt() {
 		KThread.currentThread().yield();
+		while(!queue.isEmpty()){
+			ThreadTimePair nextThread = queue.peek();
+			if (nextThread.wakeTime <= Machine.timer().getTime()){
+				nextThread.thread.ready();				
+				queue.poll();
+			}
+		}
 	}
 
 	/**
@@ -46,9 +76,15 @@ public class Alarm {
 	 */
 	public void waitUntil(long x) {
 		// for now, cheat just to get something working (busy waiting is bad)
-		long wakeTime = Machine.timer().getTime() + x;
-		while (wakeTime > Machine.timer().getTime())
-			KThread.yield();
+		if (x>0) {
+			long wakeTime = Machine.timer().getTime() + x;
+			ThreadTimePair pair = new ThreadTimePair(KThread.currentThread(), wakeTime);
+			boolean intStatus = Machine.interrupt().disable(); // disable interrupts
+			queue.add(pair);
+			KThread.sleep(); // put the thread to sleep
+			Machine.interrupt().restore(intStatus); // restore interrupts
+
+		}
 	}
 
         /**
@@ -63,4 +99,28 @@ public class Alarm {
         public boolean cancel(KThread thread) {
 		return false;
 	}
+
+
+
+
+    // Add Alarm testing code to the Alarm class
+    
+    public static void alarmTest1() {
+		int durations[] = {1000, 10*1000, 100*1000};
+		long t0, t1;
+
+		for (int d : durations) {
+			t0 = Machine.timer().getTime();
+			ThreadedKernel.alarm.waitUntil (d);
+			t1 = Machine.timer().getTime();
+			System.out.println ("alarmTest1: waited for " + (t1 - t0) + " ticks");
+		}
+    }
+
+    // Implement more test methods here ...
+
+    // Invoke Alarm.selfTest() from ThreadedKernel.selfTest()
+    public static void selfTest() {
+		alarmTest1();
+    }
 }
