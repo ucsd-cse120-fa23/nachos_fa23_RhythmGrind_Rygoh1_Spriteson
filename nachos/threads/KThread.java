@@ -290,10 +290,10 @@ public class KThread {
 		Lib.assertTrue(joined == false);
 		
 		if(this.status == statusFinished){
-			return
+			return;
 		}
 
-		waitThread = currentThread;
+		KThread waitThread = currentThread;
 		while(this.status != statusFinished){
 			if(waitThread.status != statusBlocked){
 				waitThread.sleep();
