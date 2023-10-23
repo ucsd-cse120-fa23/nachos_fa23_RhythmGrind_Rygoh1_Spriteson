@@ -59,6 +59,9 @@ public class Alarm {
 				nextThread.thread.ready();				
 				queue.poll();
 			}
+			else {
+				break;
+			}
 		}
 	}
 
@@ -83,7 +86,6 @@ public class Alarm {
 			queue.add(pair);
 			KThread.sleep(); // put the thread to sleep
 			Machine.interrupt().restore(intStatus); // restore interrupts
-
 		}
 	}
 
