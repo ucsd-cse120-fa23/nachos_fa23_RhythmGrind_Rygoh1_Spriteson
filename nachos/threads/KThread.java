@@ -1,5 +1,7 @@
 package nachos.threads;
 import nachos.machine.*;
+import java.util.LinkedList;
+
 
 /**
  * A KThread is a thread that can be used to execute Nachos kernel code. Nachos
@@ -202,6 +204,11 @@ public class KThread {
 
 		currentThread.status = statusFinished;
 
+		if (currentThread.waitQueue != null) {
+			for (KThread thread : currentThread.waitQueue) {
+				thread.ready(); // wake up the thread
+			}
+		}
 		sleep();
 	}
 
@@ -288,8 +295,8 @@ public class KThread {
 		boolean intStatus = Machine.interrupt().disable();
 
 		if(this.status!= statusFinished){
-			waitQueue = currentThread;
-			waitQueue.sleep();
+			waitQueue.add(currentThread); // Add to wait queue
+			currentThread.sleep();
 		}
 
 		this.hasBeenJoined = true; // Mark this thread as joined
@@ -476,7 +483,7 @@ public class KThread {
 
 	private static KThread idleThread = null;
 
-	private KThread waitQueue = null;
+	private LinkedList<KThread> waitQueue = new LinkedList<KThread>();
 
 	private boolean hasBeenJoined = false;
 
@@ -497,16 +504,7 @@ public class KThread {
 			}
 			});
 
-		KThread child2 = new KThread( new Runnable () {
-			public void run() {
-				System.out.println("II (comes) IN!");
-			}
-			});
-
-
 		child1.setName("child1").fork();
-		child2.setName("child2").fork();
-	
 		// We want the child to finish before we call join.  Although
 		// our solutions to the problems cannot busy wait, our test
 		// programs can!
@@ -517,7 +515,6 @@ public class KThread {
 		}
 	
 		child1.join();
-		child2.join();
 		System.out.println("After joining, child1 should be finished.");
 		System.out.println("is it? " + (child1.status == statusFinished));
 		Lib.assertTrue((child1.status == statusFinished), " Expected child1 to be finished.");
