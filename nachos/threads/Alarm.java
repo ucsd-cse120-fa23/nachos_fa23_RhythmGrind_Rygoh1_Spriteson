@@ -99,7 +99,20 @@ public class Alarm {
 	 * @param thread the thread whose timer should be cancelled.
 	 */
         public boolean cancel(KThread thread) {
-		return false;
+			boolean intStatus = Machine.interrupt().disable();
+			boolean removed = false;
+			 // Iterate through the queue to find and remove the thread
+			 for (ThreadTimePair pair : queue) {
+				if (pair.thread == thread) {
+					queue.remove(pair);
+					pair.thread.ready(); // Wake up the thread
+					removed = true;
+					break;
+				}
+			}
+			
+			Machine.interrupt().restore(intStatus); // Restore interrupts
+			return removed;
 	}
 
 
@@ -119,10 +132,40 @@ public class Alarm {
 		}
     }
 
-    // Implement more test methods here ...
+	// Add this method to the Alarm class
+public static void cancelTest() {
+    KThread thread1 = new KThread(new Runnable() {
+        public void run() {
+            System.out.println("Thread 1: Started at " + Machine.timer().getTime());
+            ThreadedKernel.alarm.waitUntil(5000); // Let's wait for 5000 ticks
+            System.out.println("Thread 1: Finished at " + Machine.timer().getTime());
+        }
+    });
+
+    KThread thread2 = new KThread(new Runnable() {
+        public void run() {
+            System.out.println("Thread 2: Started at " + Machine.timer().getTime());
+            ThreadedKernel.alarm.waitUntil(5000); // Let's wait for 5000 ticks
+            System.out.println("Thread 2: Finished at " + Machine.timer().getTime());
+        }
+    });
+
+    thread1.fork();
+    thread2.fork();
+
+    // Let's cancel thread2 after 1000 ticks. 
+    // So, it should finish its execution before thread1
+    ThreadedKernel.alarm.waitUntil(1000);
+    ThreadedKernel.alarm.cancel(thread2);
+
+    // Wait for threads to finish
+    thread1.join();
+    thread2.join();
+}
 
     // Invoke Alarm.selfTest() from ThreadedKernel.selfTest()
     public static void selfTest() {
 		alarmTest1();
+		cancelTest();
     }
 }
