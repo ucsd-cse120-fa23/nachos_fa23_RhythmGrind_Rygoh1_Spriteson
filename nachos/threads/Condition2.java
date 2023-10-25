@@ -78,7 +78,14 @@ public class Condition2 {
 			KThread thread = waitQueue.removeFirst();
 			thread.ready();
 			System.out.println("popped thread " + thread.toString());
-			//thread.ready();
+		
+			// If the thread was also waiting with a timeout, remove it from the timeout queue
+			for (ThreadTimePair pair : queue) {
+				if (pair.thread == thread) {
+					queue.remove(pair);
+					break;
+				}
+			}
 		}
 		//System.out.println("wake, waitQueue is size "+waitQueue.size());
 		Machine.interrupt().restore(intStatus);
@@ -111,30 +118,22 @@ public class Condition2 {
 				ThreadTimePair pair = new ThreadTimePair(KThread.currentThread(), wakeTime);
 				boolean intStatus = Machine.interrupt().disable();
 				queue.add(pair);
+
+				waitQueue.add(KThread.currentThread()); // Add the thread to the waiting queue as well
+
 				conditionLock.release();
-				System.out.println("waketime ="+ wakeTime);
+				//System.out.println("waketime ="+ wakeTime);
 
 				//KThread.sleep();
 				ThreadedKernel.alarm.waitUntil(timeout); // Use the Alarm class's waitUntil method.
-				System.out.println("waketime ="+ wakeTime);
+
+
 				if (!queue.isEmpty() && queue.contains(pair)) {
 					queue.remove(pair);
 				}
-				// if(waitQueue.contains(queue.peek().thread)){
-				// 	if (Machine.timer().getTime() >= queue.peek().wakeTime) {
-				// 		waitQueue.remove(KThread.currentThread());
-				// 		KThread.currentThread().ready();
-				// 		queue.poll();
-        		// 		KThread.yield();
-				// 	}
-				// }
-				// while (true) {
-				// 	if (!queue.isEmpty() && queue.peek().thread == KThread.currentThread() && Machine.timer().getTime() >= wakeTime) {
-				// 		queue.poll();
-				// 		break;  // Exit the loop and proceed to wake up the thread.
-				// 	}
-				// 	KThread.yield();  // Yield the processor so that other threads can execute
-				// }
+
+				waitQueue.remove(KThread.currentThread()); // Remove the thread from the waitQueue, regardless of whether it was woken up or timed out.
+
 				conditionLock.acquire();
 				Machine.interrupt().restore(intStatus);
 
@@ -188,9 +187,6 @@ public class Condition2 {
 		}
 	
 
-		// Invoke Condition2.selfTest() from ThreadedKernel.selfTest()
-	
-
 		private static void sleepForTest1 () {
 			Lock lock = new Lock();
 			Condition2 cv = new Condition2(lock);
@@ -205,8 +201,52 @@ public class Condition2 {
 						" woke up, slept for " + (t1 - t0) + " ticks");
 			lock.release();
 		}
+
+		private static void sleepForTest2() {
+			Lock lock = new Lock();
+			Condition2 cv = new Condition2(lock);
+		
+			Runnable sleeper = new Runnable() {
+				@Override
+				public void run() {
+					lock.acquire();
+					long t0 = Machine.timer().getTime();
+					System.out.println(KThread.currentThread().getName() + " sleeping for 4000 ticks");
+					cv.sleepFor(4000);
+					long t1 = Machine.timer().getTime();
+					System.out.println(KThread.currentThread().getName() +
+						" woke up, slept for " + (t1 - t0) + " ticks");
+					lock.release();
+				}
+			};
+		
+			Runnable waker = new Runnable() {
+				@Override
+				public void run() {
+					lock.acquire();
+					// Simulate some work with a sleep
+					ThreadedKernel.alarm.waitUntil(2000);
+					System.out.println(KThread.currentThread().getName() + " trying to wake up sleeper");
+					cv.wake(); // This should wake up the sleeper thread before its timeout
+					lock.release();
+				}
+			};
+		
+			KThread sleeperThread = new KThread(sleeper).setName("SleeperThread");
+			KThread wakerThread = new KThread(waker).setName("WakerThread");
+		
+			sleeperThread.fork();
+			wakerThread.fork();
+		
+			sleeperThread.join();
+			wakerThread.join();
+		}
+
+
+
 		
 		public static void selfTest() {
 			sleepForTest1();
+			sleepForTest2();
 		}
 }
