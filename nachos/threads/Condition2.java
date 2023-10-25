@@ -1,7 +1,6 @@
 package nachos.threads;
-
+import java.util.PriorityQueue;
 import nachos.machine.*;
-
 import java.util.LinkedList;
 
 /**
@@ -14,6 +13,23 @@ import java.util.LinkedList;
  * @see nachos.threads.Condition
  */
 public class Condition2 {
+
+	class ThreadTimePair implements Comparable<ThreadTimePair> {
+		KThread thread;
+		long wakeTime; // The time at which the thread should be woken up
+	
+		public ThreadTimePair(KThread thread, long wakeTime) {
+			this.thread = thread;
+			this.wakeTime = wakeTime;
+		}
+	
+		@Override
+		public int compareTo(ThreadTimePair other) {
+			return Long.compare(this.wakeTime, other.wakeTime);
+		}
+	}
+	private PriorityQueue<ThreadTimePair> queue;
+	
 	/**
 	 * Allocate a new condition variable.
 	 * 
@@ -24,6 +40,8 @@ public class Condition2 {
 	public Condition2(Lock conditionLock) {
 		this.conditionLock = conditionLock;
 		waitQueue = new LinkedList<KThread>();
+		queue = new PriorityQueue<ThreadTimePair>();
+
 	}
 
 	/**
@@ -33,8 +51,9 @@ public class Condition2 {
 	 * reacquire the lock before <tt>sleep()</tt> returns.
 	 */
 	public void sleep() {
+		System.out.println("HERE =");
 		Lib.assertTrue(conditionLock.isHeldByCurrentThread());
-		boolean intStatus = Machine.interrupt().disable(); // disable interrupts
+		boolean intStatus = Machine.interrupt().disable();
 
 		conditionLock.release();
 
@@ -42,8 +61,8 @@ public class Condition2 {
 		System.out.println("added to queue " + KThread.currentThread().toString());
         KThread.sleep();
 
-		Machine.interrupt().restore(intStatus);
 		conditionLock.acquire();
+		Machine.interrupt().restore(intStatus);
 	}
 
 	/**
@@ -51,6 +70,7 @@ public class Condition2 {
 	 * current thread must hold the associated lock.
 	 */
 	public void wake() {
+		
 		Lib.assertTrue(conditionLock.isHeldByCurrentThread());
 
 		boolean intStatus = Machine.interrupt().disable();
@@ -84,13 +104,42 @@ public class Condition2 {
 	 * the lock before <tt>sleep()</tt> returns.
 	 */
         public void sleepFor(long timeout) {
-		Lib.assertTrue(conditionLock.isHeldByCurrentThread());
+			Lib.assertTrue(conditionLock.isHeldByCurrentThread());
+			if (timeout>0){
 
+				long wakeTime = Machine.timer().getTime() + timeout;
+				ThreadTimePair pair = new ThreadTimePair(KThread.currentThread(), wakeTime);
+				boolean intStatus = Machine.interrupt().disable();
+				queue.add(pair);
+				conditionLock.release();
+				System.out.println("waketime ="+ wakeTime);
 
+				//KThread.sleep();
+				ThreadedKernel.alarm.waitUntil(timeout); // Use the Alarm class's waitUntil method.
+				System.out.println("waketime ="+ wakeTime);
+				if (!queue.isEmpty() && queue.contains(pair)) {
+					queue.remove(pair);
+				}
+				// if(waitQueue.contains(queue.peek().thread)){
+				// 	if (Machine.timer().getTime() >= queue.peek().wakeTime) {
+				// 		waitQueue.remove(KThread.currentThread());
+				// 		KThread.currentThread().ready();
+				// 		queue.poll();
+        		// 		KThread.yield();
+				// 	}
+				// }
+				// while (true) {
+				// 	if (!queue.isEmpty() && queue.peek().thread == KThread.currentThread() && Machine.timer().getTime() >= wakeTime) {
+				// 		queue.poll();
+				// 		break;  // Exit the loop and proceed to wake up the thread.
+				// 	}
+				// 	KThread.yield();  // Yield the processor so that other threads can execute
+				// }
+				conditionLock.acquire();
+				Machine.interrupt().restore(intStatus);
 
-		
-
-	}
+			}
+		}
 
         private Lock conditionLock;
 		private LinkedList<KThread> waitQueue;
@@ -138,9 +187,26 @@ public class Condition2 {
 			}
 		}
 	
+
 		// Invoke Condition2.selfTest() from ThreadedKernel.selfTest()
 	
+
+		private static void sleepForTest1 () {
+			Lock lock = new Lock();
+			Condition2 cv = new Condition2(lock);
+		
+			lock.acquire();
+			long t0 = Machine.timer().getTime();
+			System.out.println (KThread.currentThread().getName() + " sleeping");
+			// no other thread will wake us up, so we should time out
+			cv.sleepFor(2000);
+			long t1 = Machine.timer().getTime();
+			System.out.println (KThread.currentThread().getName() +
+						" woke up, slept for " + (t1 - t0) + " ticks");
+			lock.release();
+		}
+		
 		public static void selfTest() {
-			new InterlockTest();
+			sleepForTest1();
 		}
 }
