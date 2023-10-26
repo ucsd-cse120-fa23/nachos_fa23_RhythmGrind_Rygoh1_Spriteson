@@ -1,11 +1,13 @@
 package nachos.threads;
-
+import java.util.PriorityQueue;
 import nachos.machine.*;
 
 /**
  * Uses the hardware timer to provide preemption, and to allow threads to sleep
  * until a certain time.
  */
+
+
 public class Alarm {
 	/**
 	 * Allocate a new Alarm. Set the machine's timer interrupt handler to this
@@ -14,7 +16,28 @@ public class Alarm {
 	 * <p>
 	 * <b>Note</b>: Nachos will not function correctly with more than one alarm.
 	 */
+	class ThreadTimePair implements Comparable<ThreadTimePair> {
+		KThread thread;
+		long wakeTime; // The time at which the thread should be woken up
+	
+		public ThreadTimePair(KThread thread, long wakeTime) {
+			this.thread = thread;
+			this.wakeTime = wakeTime;
+		}
+	
+		@Override
+		public int compareTo(ThreadTimePair other) {
+			return Long.compare(this.wakeTime, other.wakeTime);
+		}
+		
+		// Optionally, getters and setters can be added here for `thread` and `wakeTime`.
+	}
+	
+
+	private PriorityQueue<ThreadTimePair> queue;
+
 	public Alarm() {
+		queue = new PriorityQueue<>();
 		Machine.timer().setInterruptHandler(new Runnable() {
 			public void run() {
 				timerInterrupt();
@@ -30,6 +53,16 @@ public class Alarm {
 	 */
 	public void timerInterrupt() {
 		KThread.currentThread().yield();
+		while(!queue.isEmpty()){
+			ThreadTimePair nextThread = queue.peek();
+			if (nextThread.wakeTime <= Machine.timer().getTime()){
+				nextThread.thread.ready();				
+				queue.poll();
+			}
+			else {
+				break;
+			}
+		}
 	}
 
 	/**
@@ -46,9 +79,14 @@ public class Alarm {
 	 */
 	public void waitUntil(long x) {
 		// for now, cheat just to get something working (busy waiting is bad)
-		long wakeTime = Machine.timer().getTime() + x;
-		while (wakeTime > Machine.timer().getTime())
-			KThread.yield();
+		if (x>0) {
+			long wakeTime = Machine.timer().getTime() + x;
+			ThreadTimePair pair = new ThreadTimePair(KThread.currentThread(), wakeTime);
+			boolean intStatus = Machine.interrupt().disable(); // disable interrupts
+			queue.add(pair);
+			KThread.sleep(); // put the thread to sleep
+			Machine.interrupt().restore(intStatus); // restore interrupts
+		}
 	}
 
         /**
@@ -61,6 +99,73 @@ public class Alarm {
 	 * @param thread the thread whose timer should be cancelled.
 	 */
         public boolean cancel(KThread thread) {
-		return false;
+			boolean intStatus = Machine.interrupt().disable();
+			boolean removed = false;
+			 // Iterate through the queue to find and remove the thread
+			 for (ThreadTimePair pair : queue) {
+				if (pair.thread == thread) {
+					queue.remove(pair);
+					pair.thread.ready(); // Wake up the thread
+					removed = true;
+					break;
+				}
+			}
+			
+			Machine.interrupt().restore(intStatus); // Restore interrupts
+			return removed;
 	}
+
+
+
+
+    // Add Alarm testing code to the Alarm class
+    
+    public static void alarmTest1() {
+		int durations[] = {1000, 10*1000, 100*1000};
+		long t0, t1;
+
+		for (int d : durations) {
+			t0 = Machine.timer().getTime();
+			ThreadedKernel.alarm.waitUntil (d);
+			t1 = Machine.timer().getTime();
+			System.out.println ("alarmTest1: waited for " + (t1 - t0) + " ticks");
+		}
+    }
+
+	// Add this method to the Alarm class
+public static void cancelTest() {
+    KThread thread1 = new KThread(new Runnable() {
+        public void run() {
+            System.out.println("Thread 1: Started at " + Machine.timer().getTime());
+            ThreadedKernel.alarm.waitUntil(5000); // Let's wait for 5000 ticks
+            System.out.println("Thread 1: Finished at " + Machine.timer().getTime());
+        }
+    });
+
+    KThread thread2 = new KThread(new Runnable() {
+        public void run() {
+            System.out.println("Thread 2: Started at " + Machine.timer().getTime());
+            ThreadedKernel.alarm.waitUntil(5000); // Let's wait for 5000 ticks
+            System.out.println("Thread 2: Finished at " + Machine.timer().getTime());
+        }
+    });
+
+    thread1.fork();
+    thread2.fork();
+
+    // Let's cancel thread2 after 1000 ticks. 
+    // So, it should finish its execution before thread1
+    ThreadedKernel.alarm.waitUntil(1000);
+    ThreadedKernel.alarm.cancel(thread2);
+
+    // Wait for threads to finish
+    thread1.join();
+    thread2.join();
+}
+
+    // Invoke Alarm.selfTest() from ThreadedKernel.selfTest()
+    public static void selfTest() {
+		alarmTest1();
+		cancelTest();
+    }
 }
