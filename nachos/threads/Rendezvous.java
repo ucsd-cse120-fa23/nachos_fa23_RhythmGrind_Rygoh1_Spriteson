@@ -1,6 +1,10 @@
 package nachos.threads;
 
 import nachos.machine.*;
+import java.util.HashMap;
+import java.util.LinkedList;
+
+
 
 /**
  * A <i>Rendezvous</i> allows threads to synchronously exchange values.
@@ -12,17 +16,18 @@ public class Rendezvous {
 
     private Lock lock;
     private Condition threadCondition;
-    private int waitingValue1 = 0;
-    private int waitingValue2 = 0;
-    private int numWaitingThreads = 0;
 
-    
+    private HashMap<Integer, LinkedList<Integer>> waitingValues;
+    private HashMap<Integer, LinkedList<KThread>> waitingThreads = new HashMap<>();
+
 
     public Rendezvous() {
         lock = new Lock();
         threadCondition = new Condition(lock);
-
+        waitingValues = new HashMap<>();
+        waitingThreads = new HashMap<>();
     }
+
 
 
 
@@ -48,33 +53,57 @@ public class Rendezvous {
     public int exchange(int tag, int value) {
         lock.acquire();
     
-        numWaitingThreads++;
+        waitingValues.putIfAbsent(tag, new LinkedList<>());
+        LinkedList<Integer> valuesForTag = waitingValues.get(tag);
     
-        if (numWaitingThreads == 1) {
-            waitingValue1 = value;
+        waitingThreads.putIfAbsent(tag, new LinkedList<>());
+        LinkedList<KThread> threadsForTag = waitingThreads.get(tag);
+    
+        valuesForTag.add(value);
+        threadsForTag.add(KThread.currentThread());
+    
+        //System.out.println("Thread " + KThread.currentThread().getName() + " added to waiting list for tag " + tag);
+    
+        // If there are more than 1 thread for this tag, perform the exchange
+        if (threadsForTag.size() > 1) {
+            KThread counterpart = threadsForTag.getFirst();
+            
+            if (counterpart == KThread.currentThread()) {  // If current thread is at the head, pick the other
+                counterpart = threadsForTag.removeLast();
+            } else {
+                counterpart = threadsForTag.removeFirst();
+            }
+    
+            int counterpartValue = valuesForTag.removeFirst();  // Get value of the counterpart thread
+            int myValue = valuesForTag.removeFirst();  // Get value of current thread
+    
+            valuesForTag.add(myValue);  // Deposit my value for counterpart to collect
+    
+            threadCondition.wake();  // Wake up the counterpart thread
+    
+            //System.out.println("Thread " + KThread.currentThread().getName() + " exchanging with " + counterpart.getName());
+    
+            lock.release();
+            return counterpartValue;
+        } else {
+            //System.out.println("Thread " + KThread.currentThread().getName() + " going to sleep for tag " + tag);
             threadCondition.sleep();
-            int returnValue = waitingValue2;
-            numWaitingThreads--;
+            //System.out.println("Thread " + KThread.currentThread().getName() + " woken up for tag " + tag);
+    
+            int returnVal = valuesForTag.removeFirst();
+            threadsForTag.removeFirst();
+    
             lock.release();
-            return returnValue;
-        } else if (numWaitingThreads == 2) {
-            waitingValue2 = value;
-            threadCondition.sleep();
-            int returnValue = waitingValue1;
-            numWaitingThreads--;
-            lock.release();
-            return returnValue;
-        } else { // numWaitingThreads == 3
-            int returnValue = waitingValue2;
-            waitingValue2 = value;
-            numWaitingThreads -= 2; // Two threads will retrieve their values
-            threadCondition.wake(); // Wake up the first thread
-            threadCondition.wake(); // Wake up the second thread
-            lock.release();
-            return returnValue;
+            return returnVal;
         }
     }
     
+    
+    
+    
+    
+
+
 
 
 
@@ -174,10 +203,84 @@ public class Rendezvous {
             t3.join();
         }
 
+        public static void rendezTest3() {
+            final Rendezvous r = new Rendezvous();
+        
+            KThread t1 = new KThread(new Runnable() {
+                public void run() {
+                    int tag = 2;
+                    int send = 1000;
+                    System.out.println("Thread " + KThread.currentThread().getName() + " exchanging " + send);
+                    int recv = r.exchange(tag, send);
+                    System.out.println("Thread " + KThread.currentThread().getName() + " received " + recv);
+                }
+            });
+            t1.setName("t1");
+        
+            KThread t2 = new KThread(new Runnable() {
+                public void run() {
+                    int tag = 2;
+                    int send = 2000;
+                    System.out.println("Thread " + KThread.currentThread().getName() + " exchanging " + send);
+                    int recv = r.exchange(tag, send);
+                    System.out.println("Thread " + KThread.currentThread().getName() + " received " + recv);
+                }
+            });
+            t2.setName("t2");
+        
+            KThread t3 = new KThread(new Runnable() {
+                public void run() {
+                    int tag = 2;
+                    int send = 3000;
+                    System.out.println("Thread " + KThread.currentThread().getName() + " exchanging " + send);
+                    int recv = r.exchange(tag, send);
+                    System.out.println("Thread " + KThread.currentThread().getName() + " received " + recv);
+                }
+            });
+            t3.setName("t3");
+        
+            KThread t4 = new KThread(new Runnable() {
+                public void run() {
+                    int tag = 2;
+                    int send = 4000;
+                    System.out.println("Thread " + KThread.currentThread().getName() + " exchanging " + send);
+                    int recv = r.exchange(tag, send);
+                    System.out.println("Thread " + KThread.currentThread().getName() + " received " + recv);
+                }
+            });
+            t4.setName("t4");
+        
+            KThread t5 = new KThread(new Runnable() {
+                public void run() {
+                    int tag = 2;
+                    int send = 5000;
+                    System.out.println("Thread " + KThread.currentThread().getName() + " exchanging " + send);
+                    int recv = r.exchange(tag, send);
+                    System.out.println("Thread " + KThread.currentThread().getName() + " received " + recv);
+                }
+            });
+            t5.setName("t5");
+        
+            t1.fork();
+            t2.fork();
+            t3.fork();
+            t4.fork();
+            t5.fork();
+        
+            t1.join();
+            t2.join();
+            t3.join();
+            t4.join();
+            t5.join();
+        }
+        
+
+
 
         public static void selfTest() {
         // place calls to your Rendezvous tests that you implement here
         //rendezTest1();
-        rendezTest2();
+        //rendezTest2();
+        rendezTest3();
         }
 }
