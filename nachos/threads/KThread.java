@@ -432,6 +432,10 @@ public class KThread {
 		new KThread(new PingTest(1)).setName("forked thread").fork();
 		new PingTest(0).run();
 		joinTest1();
+		joinTest2();
+		joinTest3();
+		joinTest4();
+		joinTest5();
 	}
 
 	private static final char dbgThread = 't';
@@ -520,6 +524,96 @@ public class KThread {
 		Lib.assertTrue((child1.status == statusFinished), " Expected child1 to be finished.");
 		}
 
+	private static void joinTest2 () {
+		// test thread waiting for joined thread
+		KThread child1 = new KThread( new Runnable () {
+			public void run() {
+				for (int i = 0; i < 100; i++) {
+					if(i % 10 == 0){
+						System.out.println ("child is running");
+					}
+				}
+			}
+		});
+		KThread thread1 = new KThread(new Runnable() {
+        public void run() {
+			for (int i = 0; i < 100; i++) {
+					if(i % 10 == 0){
+						System.out.println ("thread1 is running");
+					}
+					if(i == 50){
+						child1.join();
+					}
+			}
+        }
+    	});
+		thread1.fork();
+		child1.setName("child1").fork();
+		child1.join();
+		thread1.join();
+		Lib.assertTrue((child1.status == statusFinished), " Expected child1 to be finished.");
+		Lib.assertTrue((thread1.status == statusFinished), " Expected child1 to be finished.");
+		}
+
+	private static void joinTest3 () {
+		// test join on finished thread
+		KThread child1 = new KThread( new Runnable () {
+			public void run() {
+				for (int i = 0; i < 100; i++) {
+					if(i % 10 == 0){
+						System.out.println ("child is running");
+					}
+				}
+			}
+		});
+		KThread thread1 = new KThread(new Runnable() {
+        public void run() {
+			for (int i = 0; i < 100; i++) {
+					if(i % 10 == 0){
+						System.out.println ("thread1 is running");
+					}
+					if(i == 50){
+						child1.join();
+					}
+			}
+        }
+    	});
+		child1.setName("child1").fork();
+		thread1.fork();
+		child1.join();
+		thread1.join();
+		Lib.assertTrue((child1.status == statusFinished), " Expected child1 to be finished.");
+		}
+
+	private static void joinTest4 () {
+		// test join on self
+		boolean on = false;
+		if(on){
+			KThread self = KThread.currentThread();
+		System.out.println ("below should be an assertion for joinTest4");
+		self.join();
+		}
+	}
+
+	private static void joinTest5 () {
+		// test join twice
+		boolean on = false;
+		if(on){
+			KThread child1 = new KThread( new Runnable () {
+				public void run() {
+					for (int i = 0; i < 100; i++) {
+						if(i % 10 == 0){
+							System.out.println ("child is running");
+						}
+					}
+				}
+			});
+			child1.fork();
+			child1.join();
+			System.out.println ("below should be an assertion for joinTest5");
+			child1.join();
+		}
+	}
 }
 
 

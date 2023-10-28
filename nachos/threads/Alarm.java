@@ -63,6 +63,7 @@ public class Alarm {
 				break;
 			}
 		}
+		
 	}
 
 	/**
@@ -104,8 +105,8 @@ public class Alarm {
 			 // Iterate through the queue to find and remove the thread
 			 for (ThreadTimePair pair : queue) {
 				if (pair.thread == thread) {
-					queue.remove(pair);
 					pair.thread.ready(); // Wake up the thread
+					queue.remove(pair);
 					removed = true;
 					break;
 				}
@@ -130,6 +131,78 @@ public class Alarm {
 			t1 = Machine.timer().getTime();
 			System.out.println ("alarmTest1: waited for " + (t1 - t0) + " ticks");
 		}
+    }
+
+	public static void alarmTest2() {
+		//test negative and zero values for waitUntil
+		int durations[] = {0, -1, -100*1000};
+		long t0, t1;
+
+		for (int d : durations) {
+			t0 = Machine.timer().getTime();
+			ThreadedKernel.alarm.waitUntil (d);
+			t1 = Machine.timer().getTime();
+			System.out.println ("alarmTest2: waited for " + (t1 - t0) + " ticks");
+		}
+    }
+
+	public static void alarmTest3() {
+		//test to check multiple waiting threads
+		KThread thread1 = new KThread(new Runnable() {
+        public void run() {
+			long t0, t1;
+            System.out.println("Thread 1: Started at " + Machine.timer().getTime());
+            t0 = Machine.timer().getTime();
+			ThreadedKernel.alarm.waitUntil (5000);
+			t1 = Machine.timer().getTime();
+			System.out.println ("alarmTest3 thread 1: waited for " + (t1 - t0) + " ticks");
+        }
+    });
+
+    KThread thread2 = new KThread(new Runnable() {
+        public void run() {
+			long t0, t1;
+            System.out.println("Thread 2: Started at " + Machine.timer().getTime());
+            t0 = Machine.timer().getTime();
+			ThreadedKernel.alarm.waitUntil (1000);
+			t1 = Machine.timer().getTime();
+			System.out.println ("alarmTest3 thread 2: waited for " + (t1 - t0) + " ticks");
+        }
+    });
+
+	KThread thread3 = new KThread(new Runnable() {
+        public void run() {
+			long t0, t1;
+            System.out.println("Thread 3: Started at " + Machine.timer().getTime());
+            t0 = Machine.timer().getTime();
+			ThreadedKernel.alarm.waitUntil (500);
+			t1 = Machine.timer().getTime();
+			System.out.println ("alarmTest3 thread 3: waited for " + (t1 - t0) + " ticks");
+        }
+    });
+
+	KThread thread4 = new KThread(new Runnable() {
+        public void run() {
+			long t0, t1;
+            System.out.println("Thread 4: Started at " + Machine.timer().getTime());
+            t0 = Machine.timer().getTime();
+			ThreadedKernel.alarm.waitUntil (1000);
+			t1 = Machine.timer().getTime();
+			System.out.println ("alarmTest3 thread 4: waited for " + (t1 - t0) + " ticks");
+        }
+    });
+
+	thread1.fork();
+    thread2.fork();
+	thread3.fork();
+	thread4.fork();
+
+
+    // Wait for threads to finish
+    thread1.join();
+    thread2.join();
+	thread3.join();
+	thread4.join();
     }
 
 	// Add this method to the Alarm class
@@ -166,6 +239,8 @@ public static void cancelTest() {
     // Invoke Alarm.selfTest() from ThreadedKernel.selfTest()
     public static void selfTest() {
 		alarmTest1();
+		alarmTest2();
+		alarmTest3();
 		cancelTest();
     }
 }
