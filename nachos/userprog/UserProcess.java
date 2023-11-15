@@ -26,9 +26,8 @@ public class UserProcess {
 	public UserProcess() {
 		int numPhysPages = Machine.processor().getNumPhysPages();
 		pageTable = new TranslationEntry[numPhysPages];
-		for (int i = 0; i < numPhysPages; i++){
+		for (int i = 0; i < numPhysPages; i++)
 			pageTable[i] = new TranslationEntry(i, i, true, false, false, false);
-		}
 
 		//Every process maintains an array of OpenFiles as the descriptor table
 		//Max size is 16
@@ -151,19 +150,43 @@ public class UserProcess {
 	 * @return the number of bytes successfully transferred.
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
+
 		Lib.assertTrue(offset >= 0 && length >= 0
 				&& offset + length <= data.length);
 
 		byte[] memory = Machine.processor().getMemory();
+		int amountRead = 0;
 
 		// for now, just assume that virtual addresses equal physical addresses
-		if (vaddr < 0 || vaddr >= memory.length)
-			return 0;
+		// if (vaddr < 0 || vaddr >= memory.length)
+		// 	return 0;
 
-		int amount = Math.min(length, memory.length - vaddr);
-		System.arraycopy(memory, vaddr, data, offset, amount);
+		// int amount = Math.min(length, memory.length - vaddr);
+		// System.arraycopy(memory, vaddr, data, offset, amount);
+		while (length > 0) {
+			int vpn = Processor.pageFromAddress(vaddr);
+			if (vpn < 0 || vpn >= pageTable.length || !pageTable[vpn].valid) {
+				break; // Invalid virtual page number or page not valid.
+			}
+	
+			int ppn = pageTable[vpn].ppn;
+			int paddr = Processor.makeAddress(ppn, Processor.offsetFromAddress(vaddr));
+			if (paddr < 0 || paddr >= memory.length) {
+				break; // Physical address out of bounds.
+			}
+	
+			int amount = Math.min(length, Processor.pageSize - Processor.offsetFromAddress(vaddr));
+			System.arraycopy(memory, paddr, data, offset, amount);
+	
+			vaddr += amount;
+			offset += amount;
+			length -= amount;
+			amountRead += amount;
+		}
 
-		return amount;
+
+		//return amount;
+		return amountRead;
 	}
 
 	/**
@@ -325,24 +348,43 @@ public class UserProcess {
 	 * @return <tt>true</tt> if the sections were successfully loaded.
 	 */
 	protected boolean loadSections() {
+
 		if (numPages > Machine.processor().getNumPhysPages()) {
 			coff.close();
 			Lib.debug(dbgProcess, "\tinsufficient physical memory");
 			return false;
 		}
 
+		// Allocate pageTable with the correct size.
+		pageTable = new TranslationEntry[numPages];
+
+		for (int i = 0; i < numPages; i++) {
+			int physPage = UserKernel.allocatePage();
+			if (physPage == -1) {
+				Lib.debug(dbgProcess, "\tinsufficient physical memory");
+				unloadSections();
+				return false;
+			}
+
+			// Initially, all pages are not read-only.
+			pageTable[i] = new TranslationEntry(i, physPage, true, false, false, false);
+		}
+
+
 		// load sections
 		for (int s = 0; s < coff.getNumSections(); s++) {
 			CoffSection section = coff.getSection(s);
-
+			
 			Lib.debug(dbgProcess, "\tinitializing " + section.getName()
 					+ " section (" + section.getLength() + " pages)");
 
 			for (int i = 0; i < section.getLength(); i++) {
 				int vpn = section.getFirstVPN() + i;
 
-				// for now, just assume virtual addresses=physical addresses
-				section.loadPage(i, vpn);
+				// Set the readOnly flag based on the section's property
+            	pageTable[vpn].readOnly = section.isReadOnly();
+
+				section.loadPage(i, pageTable[vpn].ppn);
 			}
 		}
 
@@ -353,6 +395,13 @@ public class UserProcess {
 	 * Release any resources allocated by <tt>loadSections()</tt>.
 	 */
 	protected void unloadSections() {
+		//This method should free the physical pages when the process exits.
+		for (TranslationEntry entry : pageTable) {
+			if (entry.valid) {
+				UserKernel.freePage(entry.ppn);
+				entry.valid = false;
+			}
+		}
 	}
 
 	/**
@@ -567,6 +616,10 @@ public class UserProcess {
 
 	}
 
+	private static final int syscallHalt = 0, syscallExit = 1, syscallExec = 2,
+	syscallJoin = 3, syscallCreate = 4, syscallOpen = 5,
+	syscallRead = 6, syscallWrite = 7, syscallClose = 8,
+	syscallUnlink = 9;
 	/**
 	 * Delete a file from the file system. 
 	 *
@@ -591,12 +644,6 @@ public class UserProcess {
 		return -1;
 
 	}
-
-	private static final int syscallHalt = 0, syscallExit = 1, syscallExec = 2,
-			syscallJoin = 3, syscallCreate = 4, syscallOpen = 5,
-			syscallRead = 6, syscallWrite = 7, syscallClose = 8,
-			syscallUnlink = 9;
-
 	/**
 	 * Handle a syscall exception. Called by <tt>handleException()</tt>. The
 	 * <i>syscall</i> argument identifies which syscall the user executed:
@@ -658,6 +705,8 @@ public class UserProcess {
 	 * @param a3 the fourth syscall argument.
 	 * @return the value to be returned to the user.
 	 */
+
+
 	public int handleSyscall(int syscall, int a0, int a1, int a2, int a3) {
 		switch (syscall) {
 		case syscallHalt:
@@ -747,6 +796,4 @@ public class UserProcess {
 	private static int bufferSize = 1024;
 
 	private byte[] localBuffer = new byte[bufferSize];
-
-
 }
