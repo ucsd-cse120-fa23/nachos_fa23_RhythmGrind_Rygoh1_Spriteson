@@ -26,8 +26,17 @@ public class UserProcess {
 	public UserProcess() {
 		int numPhysPages = Machine.processor().getNumPhysPages();
 		pageTable = new TranslationEntry[numPhysPages];
-		for (int i = 0; i < numPhysPages; i++)
+		for (int i = 0; i < numPhysPages; i++){
 			pageTable[i] = new TranslationEntry(i, i, true, false, false, false);
+		}
+
+		//Every process maintains an array of OpenFiles as the descriptor table
+		//Max size is 16
+		fdTable = new OpenFile[fdSize];
+
+		//file descritor table, 0 for stdin, 1 for stdout.
+		fdTable[0] = UserKernel.console.openForReading();
+		fdTable[1] = UserKernel.console.openForWriting();
 	}
 
 	/**
@@ -397,6 +406,192 @@ public class UserProcess {
 		return 0;
 	}
 
+	/**
+	 * Attempt to open the named disk file, creating it if it does not exist,
+	 * and return a file descriptor that can be used to access the file. If
+	 * the file already exists, creat truncates it.
+	 *
+	 * Note that creat() can only be used to create files on disk; creat() will
+	 * never return a file descriptor referring to a stream.
+	 *
+	 * Returns the new file descriptor, or -1 if an error occurred.
+	 */
+
+	/**
+	 * Attempt to open the named file and return a file descriptor.
+	 *
+	 * Note that open() can only be used to open files on disk; open() will never
+	 * return a file descriptor referring to a stream.
+	 *
+	 * Returns the new file descriptor, or -1 if an error occurred.
+	 */
+
+	private int handleCreateOpen(int vaName) {
+		//System.out.println("Entering handleCreateOpen");
+		String fileName = readVirtualMemoryString(vaName,256);
+		if (fileName == null)
+			return -1;
+
+		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, true);
+		if (fd == null) 
+			return -1;
+
+		for (int i = 2; i < fdSize; i++){
+			if (fdTable[i] == null){
+				fdTable[i] = fd;
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	/**
+	 * Attempt to read up to count bytes into buffer from the file or stream
+	 * referred to by fileDescriptor.
+	 *
+	 * On success, the number of bytes read is returned. If the file descriptor
+	 * refers to a file on disk, the file position is advanced by this number.
+	 *
+	 * It is not necessarily an error if this number is smaller than the number of
+	 * bytes requested. If the file descriptor refers to a file on disk, this
+	 * indicates that the end of the file has been reached. If the file descriptor
+	 * refers to a stream, this indicates that the fewer bytes are actually
+	 * available right now than were requested, but more bytes may become available
+	 * in the future. NOTE: read() never waits for a stream to have more data; it
+	 * always returns as much as possible immediately (which can be just 1 byte).
+	 *
+	 * On error, -1 is returned, and the new file position is undefined. This can
+	 * happen if fileDescriptor is invalid, if part of the buffer is read-only or
+	 * invalid, or if a network stream has been terminated by the remote host and
+	 * no more data is available.
+	 */
+	private int handleRead(int fd, int vaBuffer, int count) {
+		//System.out.println("Entering handleRead");
+		if (fd<0 || fd>=fdSize || count < 0)
+			return -1;
+
+		OpenFile fileName = fdTable[fd];
+		if (fileName == null)
+			return -1;
+
+		//loop untill all data is read
+		int total = 0;
+		while (total < count){
+			int transfer = Math.min(count, bufferSize);
+			int amountRead = fileName.read(localBuffer, 0, transfer);
+
+			if (amountRead == -1)
+				return -1;
+
+			amountRead = writeVirtualMemory(vaBuffer, localBuffer, 0, amountRead);
+			total += amountRead;
+			vaBuffer += amountRead;
+			count -= amountRead;
+
+			//the memory is full/no space
+			if (amountRead < transfer)
+				return total;
+		}
+		return total;
+	}
+
+	/**
+	 * Attempt to write up to count bytes from buffer to the file or stream
+	 * referred to by fileDescriptor. write() can return before the bytes are
+	 * actually flushed to the file or stream. A write to a stream can block,
+	 * however, if kernel queues are temporarily full.
+	 *
+	 * On success, the number of bytes written is returned (zero indicates nothing
+	 * was written), and the file position is advanced by this number. It IS an
+	 * error if this number is smaller than the number of bytes requested. For
+	 * disk files, this indicates that the disk is full. For streams, this
+	 * indicates the stream was terminated by the remote host before all the data
+	 * was transferred.
+	 *
+	 * On error, -1 is returned, and the new file position is undefined. This can
+	 * happen if fileDescriptor is invalid, if part of the buffer is invalid, or
+	 * if a network stream has already been terminated by the remote host.
+	 */
+	private int handleWrite(int fd, int vaBuffer, int count) {
+		//System.out.println("Entering handleWrite");
+		if (fd<0 || fd>=fdSize || count < 0)
+			return -1;
+
+		OpenFile fileName = fdTable[fd];
+		if (fileName == null)
+			return -1;
+
+		//loop untill all data is read
+		int total = 0;
+		while (total < count){
+			int transfer = Math.min(count, bufferSize);
+			int amountWrite = readVirtualMemory(vaBuffer, localBuffer, 0, transfer);
+
+			amountWrite = fileName.write(localBuffer, 0, amountWrite);
+			if (amountWrite == -1)
+				return -1;
+
+			total += amountWrite;
+			vaBuffer += amountWrite;
+			count -= amountWrite;
+
+			//the memory is full/no space
+			if (amountWrite < transfer)
+				return total;
+		}
+		return total;
+	}
+
+	/**
+	 * Close a file descriptor, so that it no longer refers to any file or
+	 * stream and may be reused. The resources associated with the file
+	 * descriptor are released.
+	 *
+	 * Returns 0 on success, or -1 if an error occurred.
+	 */
+
+	private int handleClose(int fd) {
+		//System.out.println("Entering handleClose");
+		if (fd < 0 || fd > fdSize)
+			return -1;
+
+		OpenFile thisFile = fdTable[fd];
+		if (thisFile == null) 
+			return -1;
+
+		//close the file and set free the table
+		thisFile.close();
+		fdTable[fd] = null;
+		
+		return 0;
+
+	}
+
+	/**
+	 * Delete a file from the file system. 
+	 *
+	 * Note that unlink does not close any files.  If this or another
+	 * process has the file open, the underlying file system
+	 * implementation in StubFileSystem will cleanly handle this situation
+	 * (this process will ask the file system to remove the file, but the
+	 * file will not actually be deleted by the file system until all
+	 * other processes are done with the file).
+	 *
+	 * Returns 0 on success, or -1 if an error occurred.
+	 */
+	private int handleUnlink(int vaName) {
+		//System.out.println("Entering handleUnlink");
+		String fileName = readVirtualMemoryString(vaName,256);
+		if (fileName == null)
+			return -1;
+
+		if (ThreadedKernel.fileSystem.remove(fileName))
+			return 0;
+		
+		return -1;
+
+	}
+
 	private static final int syscallHalt = 0, syscallExit = 1, syscallExec = 2,
 			syscallJoin = 3, syscallCreate = 4, syscallOpen = 5,
 			syscallRead = 6, syscallWrite = 7, syscallClose = 8,
@@ -469,6 +664,21 @@ public class UserProcess {
 			return handleHalt();
 		case syscallExit:
 			return handleExit(a0);
+		case syscallCreate:
+			return handleCreateOpen(a0);
+		case syscallOpen:
+			return handleCreateOpen(a0);
+		case syscallRead:
+			return handleRead(a0,a1,a2);
+		case syscallWrite:
+			return handleWrite(a0,a1,a2);
+		case syscallClose:
+			return handleClose(a0);
+		case syscallUnlink:
+			return handleUnlink(a0);
+
+
+		
 
 		default:
 			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
@@ -527,4 +737,16 @@ public class UserProcess {
 	private static final int pageSize = Processor.pageSize;
 
 	private static final char dbgProcess = 'a';
+
+	private static int fdSize = 16;
+	//file descritor table, 0 for stdin, 1 for stdout.
+	private OpenFile[] fdTable;
+
+
+	//local buffer with size of 1024
+	private static int bufferSize = 1024;
+
+	private byte[] localBuffer = new byte[bufferSize];
+
+
 }
