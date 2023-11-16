@@ -474,25 +474,42 @@ public class UserProcess {
 	 *
 	 * Returns the new file descriptor, or -1 if an error occurred.
 	 */
-
-	private int handleCreateOpen(int vaName) {
-		//System.out.println("Entering handleCreateOpen");
-		String fileName = readVirtualMemoryString(vaName,256);
+	private int handleOpen(int vaName) {
+		String fileName = readVirtualMemoryString(vaName, 256);
 		if (fileName == null)
 			return -1;
-
-		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, true);
-		if (fd == null) 
+	
+		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, false);
+		if (fd == null)
 			return -1;
-
-		for (int i = 2; i < fdSize; i++){
-			if (fdTable[i] == null){
+	
+		for (int i = 2; i < fdSize; i++) {
+			if (fdTable[i] == null) {
 				fdTable[i] = fd;
 				return i;
 			}
 		}
 		return -1;
 	}
+	
+	private int handleCreat(int vaName) {
+		String fileName = readVirtualMemoryString(vaName, 256);
+		if (fileName == null)
+			return -1;
+	
+		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, true);
+		if (fd == null)
+			return -1;
+	
+		for (int i = 2; i < fdSize; i++) {
+			if (fdTable[i] == null) {
+				fdTable[i] = fd;
+				return i;
+			}
+		}
+		return -1;
+	}
+	
 
 	/**
 	 * Attempt to read up to count bytes into buffer from the file or stream
@@ -525,21 +542,22 @@ public class UserProcess {
 
 		//loop untill all data is read
 		int total = 0;
-		while (total < count){
-			int transfer = Math.min(count, bufferSize);
-			int amountRead = fileName.read(localBuffer, 0, transfer);
+		int maxTransferSize = bufferSize; // Adjust this size as needed
 
-			if (amountRead == -1)
-				return -1;
-
-			amountRead = writeVirtualMemory(vaBuffer, localBuffer, 0, amountRead);
-			total += amountRead;
-			vaBuffer += amountRead;
-			count -= amountRead;
-
-			//the memory is full/no space
-			if (amountRead < transfer)
-				return total;
+		while (count > 0) {
+			int transferSize = Math.min(count, maxTransferSize);
+			int amountRead = fileName.read(localBuffer, 0, transferSize);
+	
+			if (amountRead <= 0)
+				break;
+	
+			int amountWritten = writeVirtualMemory(vaBuffer, localBuffer, 0, amountRead);
+			if (amountWritten < amountRead) // Handle partial transfers
+				break;
+	
+			total += amountWritten;
+			vaBuffer += amountWritten;
+			count -= amountWritten;
 		}
 		return total;
 	}
@@ -572,21 +590,22 @@ public class UserProcess {
 
 		//loop untill all data is read
 		int total = 0;
-		while (total < count){
-			int transfer = Math.min(count, bufferSize);
-			int amountWrite = readVirtualMemory(vaBuffer, localBuffer, 0, transfer);
+		int maxTransferSize = bufferSize; // You can adjust this size
 
-			amountWrite = fileName.write(localBuffer, 0, amountWrite);
-			if (amountWrite == -1)
+		while (count > 0) {
+			int transferSize = Math.min(count, maxTransferSize);
+			int amountRead = readVirtualMemory(vaBuffer, localBuffer, 0, transferSize);
+	
+			int amountWritten = fileName.write(localBuffer, 0, amountRead);
+			if (amountWritten <= 0)
 				return -1;
-
-			total += amountWrite;
-			vaBuffer += amountWrite;
-			count -= amountWrite;
-
-			//the memory is full/no space
-			if (amountWrite < transfer)
-				return total;
+	
+			total += amountWritten;
+			vaBuffer += amountWritten;
+			count -= amountWritten;
+	
+			if (amountWritten < transferSize) // Partial write, disk might be full
+				break;
 		}
 		return total;
 	}
@@ -714,9 +733,9 @@ public class UserProcess {
 		case syscallExit:
 			return handleExit(a0);
 		case syscallCreate:
-			return handleCreateOpen(a0);
-		case syscallOpen:
-			return handleCreateOpen(a0);
+            return handleCreat(a0);
+        case syscallOpen:
+            return handleOpen(a0);
 		case syscallRead:
 			return handleRead(a0,a1,a2);
 		case syscallWrite:
