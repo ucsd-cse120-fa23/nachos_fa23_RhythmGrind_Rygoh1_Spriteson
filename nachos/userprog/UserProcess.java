@@ -6,6 +6,7 @@ import nachos.userprog.*;
 import nachos.vm.*;
 
 import java.io.EOFException;
+import java.util.HashMap;
 
 /**
  * Encapsulates the state of a user process that is not contained in its user
@@ -26,8 +27,19 @@ public class UserProcess {
 	public UserProcess() {
 		int numPhysPages = Machine.processor().getNumPhysPages();
 		pageTable = new TranslationEntry[numPhysPages];
+		pid = UserKernel.pids++;
+		UserKernel.num_processes++;
+		System.out.println("new process created");
 		for (int i = 0; i < numPhysPages; i++)
 			pageTable[i] = new TranslationEntry(i, i, true, false, false, false);
+
+		//Every process maintains an array of OpenFiles as the descriptor table
+		//Max size is 16
+		fdTable = new OpenFile[fdSize];
+
+		//file descritor table, 0 for stdin, 1 for stdout.
+		fdTable[0] = UserKernel.console.openForReading();
+		fdTable[1] = UserKernel.console.openForWriting();
 	}
 
 	/**
@@ -142,19 +154,43 @@ public class UserProcess {
 	 * @return the number of bytes successfully transferred.
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
+
 		Lib.assertTrue(offset >= 0 && length >= 0
 				&& offset + length <= data.length);
 
 		byte[] memory = Machine.processor().getMemory();
+		int amountRead = 0;
 
 		// for now, just assume that virtual addresses equal physical addresses
-		if (vaddr < 0 || vaddr >= memory.length)
-			return 0;
+		// if (vaddr < 0 || vaddr >= memory.length)
+		// 	return 0;
 
-		int amount = Math.min(length, memory.length - vaddr);
-		System.arraycopy(memory, vaddr, data, offset, amount);
+		// int amount = Math.min(length, memory.length - vaddr);
+		// System.arraycopy(memory, vaddr, data, offset, amount);
+		while (length > 0) {
+			int vpn = Processor.pageFromAddress(vaddr);
+			if (vpn < 0 || vpn >= pageTable.length || !pageTable[vpn].valid) {
+				break; // Invalid virtual page number or page not valid.
+			}
+	
+			int ppn = pageTable[vpn].ppn;
+			int paddr = Processor.makeAddress(ppn, Processor.offsetFromAddress(vaddr));
+			if (paddr < 0 || paddr >= memory.length) {
+				break; // Physical address out of bounds.
+			}
+	
+			int amount = Math.min(length, Processor.pageSize - Processor.offsetFromAddress(vaddr));
+			System.arraycopy(memory, paddr, data, offset, amount);
+	
+			vaddr += amount;
+			offset += amount;
+			length -= amount;
+			amountRead += amount;
+		}
 
-		return amount;
+
+		//return amount;
+		return amountRead;
 	}
 
 	/**
@@ -316,24 +352,43 @@ public class UserProcess {
 	 * @return <tt>true</tt> if the sections were successfully loaded.
 	 */
 	protected boolean loadSections() {
+
 		if (numPages > Machine.processor().getNumPhysPages()) {
 			coff.close();
 			Lib.debug(dbgProcess, "\tinsufficient physical memory");
 			return false;
 		}
 
+		// Allocate pageTable with the correct size.
+		pageTable = new TranslationEntry[numPages];
+
+		for (int i = 0; i < numPages; i++) {
+			int physPage = UserKernel.allocatePage();
+			if (physPage == -1) {
+				Lib.debug(dbgProcess, "\tinsufficient physical memory");
+				unloadSections();
+				return false;
+			}
+
+			// Initially, all pages are not read-only.
+			pageTable[i] = new TranslationEntry(i, physPage, true, false, false, false);
+		}
+
+
 		// load sections
 		for (int s = 0; s < coff.getNumSections(); s++) {
 			CoffSection section = coff.getSection(s);
-
+			
 			Lib.debug(dbgProcess, "\tinitializing " + section.getName()
 					+ " section (" + section.getLength() + " pages)");
 
 			for (int i = 0; i < section.getLength(); i++) {
 				int vpn = section.getFirstVPN() + i;
 
-				// for now, just assume virtual addresses=physical addresses
-				section.loadPage(i, vpn);
+				// Set the readOnly flag based on the section's property
+            	pageTable[vpn].readOnly = section.isReadOnly();
+
+				section.loadPage(i, pageTable[vpn].ppn);
 			}
 		}
 
@@ -344,6 +399,13 @@ public class UserProcess {
 	 * Release any resources allocated by <tt>loadSections()</tt>.
 	 */
 	protected void unloadSections() {
+		//This method should free the physical pages when the process exits.
+		for (TranslationEntry entry : pageTable) {
+			if (entry.valid) {
+				UserKernel.freePage(entry.ppn);
+				entry.valid = false;
+			}
+		}
 	}
 
 	/**
@@ -374,9 +436,10 @@ public class UserProcess {
 	 */
 	private int handleHalt() {
 		Lib.debug(dbgProcess, "UserProcess.handleHalt");
-
+		if(pid != 0){
+			return -1;
+		}	
 		Machine.halt();
-
 		Lib.assertNotReached("Machine.halt() did not halt machine!");
 		return 0;
 	}
@@ -384,23 +447,317 @@ public class UserProcess {
 	/**
 	 * Handle the exit() system call.
 	 */
+	private int exitStatus;
+
 	private int handleExit(int status) {
-	        // Do not remove this call to the autoGrader...
+	    // Do not remove this call to the autoGrader...
 		Machine.autoGrader().finishingCurrentProcess(status);
 		// ...and leave it as the top of handleExit so that we
 		// can grade your implementation.
 
 		Lib.debug(dbgProcess, "UserProcess.handleExit (" + status + ")");
 		// for now, unconditionally terminate with just one process
-		Kernel.kernel.terminate();
-
+		for (int i = 0 ; i < fdSize; i++){
+			if (fdTable[i] != null) {
+				OpenFile toClear = fdTable[i];
+				toClear.close();
+				fdTable[i] = null;
+			}
+		}
+		exitStatus = status;
+		unloadSections();
+		coff.close();
+		System.out.println("removing process");
+		UserKernel.num_processes--;
+		System.out.println("num_process is");
+		System.out.println(UserKernel.num_processes);
+		if(UserKernel.num_processes == 0){
+			System.out.println("root process, terminating");
+			Kernel.kernel.terminate();
+		}
+		System.out.println("not root");
+		KThread.finish();
 		return 0;
 	}
 
+	/**
+	 * Attempt to open the named disk file, creating it if it does not exist,
+	 * and return a file descriptor that can be used to access the file. If
+	 * the file already exists, creat truncates it.
+	 *
+	 * Note that creat() can only be used to create files on disk; creat() will
+	 * never return a file descriptor referring to a stream.
+	 *
+	 * Returns the new file descriptor, or -1 if an error occurred.
+	 */
+
+	/**
+	 * Attempt to open the named file and return a file descriptor.
+	 *
+	 * Note that open() can only be used to open files on disk; open() will never
+	 * return a file descriptor referring to a stream.
+	 *
+	 * Returns the new file descriptor, or -1 if an error occurred.
+	 */
+	private int handleOpen(int vaName) {
+		String fileName = readVirtualMemoryString(vaName, 256);
+		if (fileName == null)
+			return -1;
+	
+		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, false);
+		if (fd == null)
+			return -1;
+	
+		for (int i = 2; i < fdSize; i++) {
+			if (fdTable[i] == null) {
+				fdTable[i] = fd;
+				return i;
+			}
+		}
+		return -1;
+	}
+	
+	private int handleCreat(int vaName) {
+		String fileName = readVirtualMemoryString(vaName, 256);
+		if (fileName == null)
+			return -1;
+	
+		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, true);
+		if (fd == null)
+			return -1;
+	
+		for (int i = 2; i < fdSize; i++) {
+			if (fdTable[i] == null) {
+				fdTable[i] = fd;
+				return i;
+			}
+		}
+		return -1;
+	}
+	
+
+	/**
+	 * Attempt to read up to count bytes into buffer from the file or stream
+	 * referred to by fileDescriptor.
+	 *
+	 * On success, the number of bytes read is returned. If the file descriptor
+	 * refers to a file on disk, the file position is advanced by this number.
+	 *
+	 * It is not necessarily an error if this number is smaller than the number of
+	 * bytes requested. If the file descriptor refers to a file on disk, this
+	 * indicates that the end of the file has been reached. If the file descriptor
+	 * refers to a stream, this indicates that the fewer bytes are actually
+	 * available right now than were requested, but more bytes may become available
+	 * in the future. NOTE: read() never waits for a stream to have more data; it
+	 * always returns as much as possible immediately (which can be just 1 byte).
+	 *
+	 * On error, -1 is returned, and the new file position is undefined. This can
+	 * happen if fileDescriptor is invalid, if part of the buffer is read-only or
+	 * invalid, or if a network stream has been terminated by the remote host and
+	 * no more data is available.
+	 */
+	private int handleRead(int fd, int vaBuffer, int count) {
+		//System.out.println("Entering handleRead");
+		if (fd<0 || fd>=fdSize || count < 0)
+			return -1;
+
+		OpenFile fileName = fdTable[fd];
+		if (fileName == null)
+			return -1;
+
+		//loop untill all data is read
+		int total = 0;
+		int maxTransferSize = bufferSize; // Adjust this size as needed
+
+		while (count > 0) {
+			int transferSize = Math.min(count, maxTransferSize);
+			int amountRead = fileName.read(localBuffer, 0, transferSize);
+	
+			if (amountRead <= 0)
+				break;
+	
+			int amountWritten = writeVirtualMemory(vaBuffer, localBuffer, 0, amountRead);
+			if (amountWritten < amountRead) // Handle partial transfers
+				break;
+	
+			total += amountWritten;
+			vaBuffer += amountWritten;
+			count -= amountWritten;
+		}
+		return total;
+	}
+
+	/**
+	 * Attempt to write up to count bytes from buffer to the file or stream
+	 * referred to by fileDescriptor. write() can return before the bytes are
+	 * actually flushed to the file or stream. A write to a stream can block,
+	 * however, if kernel queues are temporarily full.
+	 *
+	 * On success, the number of bytes written is returned (zero indicates nothing
+	 * was written), and the file position is advanced by this number. It IS an
+	 * error if this number is smaller than the number of bytes requested. For
+	 * disk files, this indicates that the disk is full. For streams, this
+	 * indicates the stream was terminated by the remote host before all the data
+	 * was transferred.
+	 *
+	 * On error, -1 is returned, and the new file position is undefined. This can
+	 * happen if fileDescriptor is invalid, if part of the buffer is invalid, or
+	 * if a network stream has already been terminated by the remote host.
+	 */
+	private int handleWrite(int fd, int vaBuffer, int count) {
+		//System.out.println("Entering handleWrite");
+		if (fd<0 || fd>=fdSize || count < 0)
+			return -1;
+
+		OpenFile fileName = fdTable[fd];
+		if (fileName == null)
+			return -1;
+
+		//loop untill all data is read
+		int total = 0;
+		int maxTransferSize = bufferSize; // You can adjust this size
+
+		while (count > 0) {
+			int transferSize = Math.min(count, maxTransferSize);
+			int amountRead = readVirtualMemory(vaBuffer, localBuffer, 0, transferSize);
+	
+			int amountWritten = fileName.write(localBuffer, 0, amountRead);
+			if (amountWritten <= 0)
+				return -1;
+	
+			total += amountWritten;
+			vaBuffer += amountWritten;
+			count -= amountWritten;
+	
+			if (amountWritten < transferSize) // Partial write, disk might be full
+				break;
+		}
+		return total;
+	}
+
+	/**
+	 * Close a file descriptor, so that it no longer refers to any file or
+	 * stream and may be reused. The resources associated with the file
+	 * descriptor are released.
+	 *
+	 * Returns 0 on success, or -1 if an error occurred.
+	 */
+
+	private int handleClose(int fd) {
+		//System.out.println("Entering handleClose");
+		if (fd < 0 || fd > fdSize)
+			return -1;
+
+		OpenFile thisFile = fdTable[fd];
+		if (thisFile == null) 
+			return -1;
+
+		//close the file and set free the table
+		thisFile.close();
+		fdTable[fd] = null;
+		
+		return 0;
+
+	}
+
 	private static final int syscallHalt = 0, syscallExit = 1, syscallExec = 2,
-			syscallJoin = 3, syscallCreate = 4, syscallOpen = 5,
-			syscallRead = 6, syscallWrite = 7, syscallClose = 8,
-			syscallUnlink = 9;
+	syscallJoin = 3, syscallCreate = 4, syscallOpen = 5,
+	syscallRead = 6, syscallWrite = 7, syscallClose = 8,
+	syscallUnlink = 9;
+	/**
+	 * Delete a file from the file system. 
+	 *
+	 * Note that unlink does not close any files.  If this or another
+	 * process has the file open, the underlying file system
+	 * implementation in StubFileSystem will cleanly handle this situation
+	 * (this process will ask the file system to remove the file, but the
+	 * file will not actually be deleted by the file system until all
+	 * other processes are done with the file).
+	 *
+	 * Returns 0 on success, or -1 if an error occurred.
+	 */
+	private int handleUnlink(int vaName) {
+		//System.out.println("Entering handleUnlink");
+		String fileName = readVirtualMemoryString(vaName,256);
+		if (fileName == null)
+			return -1;
+
+		if (ThreadedKernel.fileSystem.remove(fileName))
+			return 0;
+		
+		return -1;
+
+	}
+
+	private static HashMap<Integer, UserProcess> children = new HashMap<>();
+	private int pid;
+
+	private int handleExec(int fileNameaddr, int argc, int argv) {
+		if(argc < 0) {
+			System.out.println("arc < 0");
+			return -1;
+		}
+		if(fileNameaddr < 0){
+			System.out.println("bad address");
+			return -1;
+		}
+		String fileName = readVirtualMemoryString(fileNameaddr, 256);
+		if(fileName == null){
+			System.out.println("fileName is null");
+			return -1;
+		}
+
+		if(fileName.length() < 6 || !fileName.substring(fileName.length() - 5).equals(".coff")){
+			System.out.println("fileName is invalid");
+			return -1;
+		}
+		String[] args = new String[argc];
+		int argvloop = argv;
+		for (int i = 0; i < argc; i++){
+			args[i] = readVirtualMemoryString(argvloop, 256);
+			argvloop+=4;
+		}
+
+		UserProcess child = newUserProcess();
+		if(child.execute(fileName, args)){
+			children.put(child.pid, child);
+			System.out.println("Successful exec");
+			System.out.println("child pid is ");
+			System.out.println(child.pid);
+			return child.pid;
+		}
+		else{
+			System.out.println("Failed exec");
+			return -1;
+		}
+	}
+
+	private int handleJoin(int childPID, int status_addr){
+		System.out.println("child PID is");
+		System.out.println(childPID);
+		System.out.println(children.containsKey(childPID));
+		if(!children.containsKey(childPID)){
+			System.out.println("Not a child");
+			return -1;
+		}
+		UserProcess child = children.get(childPID);
+		child.thread.join();
+		children.remove(childPID);
+		int status = child.exitStatus;
+		if(status_addr < 0) {
+			System.out.println("status_addr is null");
+			return 1;
+		}
+		if(status == Integer.MIN_VALUE) {
+			System.out.println("Unhandled exception");
+			return 0;
+		}
+		byte[] toWrite = Lib.bytesFromInt(status);
+		writeVirtualMemory(status_addr, toWrite);
+		System.out.println("Successful join");
+		return 1;
+	}
+
 
 	/**
 	 * Handle a syscall exception. Called by <tt>handleException()</tt>. The
@@ -463,12 +820,33 @@ public class UserProcess {
 	 * @param a3 the fourth syscall argument.
 	 * @return the value to be returned to the user.
 	 */
+
+
 	public int handleSyscall(int syscall, int a0, int a1, int a2, int a3) {
 		switch (syscall) {
 		case syscallHalt:
 			return handleHalt();
 		case syscallExit:
 			return handleExit(a0);
+		case syscallExec:
+			return handleExec(a0,a1,a2);
+		case syscallJoin:
+			return handleJoin(a0,a1);
+		case syscallCreate:
+            return handleCreat(a0);
+        case syscallOpen:
+            return handleOpen(a0);
+		case syscallRead:
+			return handleRead(a0,a1,a2);
+		case syscallWrite:
+			return handleWrite(a0,a1,a2);
+		case syscallClose:
+			return handleClose(a0);
+		case syscallUnlink:
+			return handleUnlink(a0);
+
+
+		
 
 		default:
 			Lib.debug(dbgProcess, "Unknown syscall " + syscall);
@@ -527,4 +905,15 @@ public class UserProcess {
 	private static final int pageSize = Processor.pageSize;
 
 	private static final char dbgProcess = 'a';
+
+	private static int fdSize = 16;
+	//file descritor table, 0 for stdin, 1 for stdout.
+	private OpenFile[] fdTable;
+
+	//local buffer with size of 1024
+	private static int bufferSize = 1024;
+
+	private byte[] localBuffer = new byte[bufferSize];
+
+	private UserProcess parent = null;
 }
