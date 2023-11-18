@@ -1,5 +1,5 @@
 package nachos.userprog;
-
+import java.util.LinkedList;
 import nachos.machine.*;
 import nachos.threads.*;
 import nachos.userprog.*;
@@ -19,8 +19,17 @@ public class UserKernel extends ThreadedKernel {
 	 * Initialize this kernel. Creates a synchronized console and sets the
 	 * processor's exception handler.
 	 */
+	private static LinkedList<Integer> freePages;
+
 	public void initialize(String[] args) {
+
 		super.initialize(args);
+		freePages = new LinkedList<>();
+
+		int numPhysPages = Machine.processor().getNumPhysPages();
+        for (int i = 0; i < numPhysPages; i++) {
+            freePages.add(i);
+        }
 
 		console = new SynchConsole(Machine.console());
 
@@ -29,7 +38,26 @@ public class UserKernel extends ThreadedKernel {
 				exceptionHandler();
 			}
 		});
+
+
 	}
+
+    // Synchronized methods to allocate and free pages.
+    public static synchronized int allocatePage() {
+        if (!freePages.isEmpty()) {
+            return freePages.removeFirst();
+        }
+        return -1; // Indicate failure.
+    }
+
+    public static synchronized void freePage(int pageNumber) {
+        freePages.add(pageNumber);
+    }
+
+
+
+
+
 
 	/**
 	 * Test the console device.
