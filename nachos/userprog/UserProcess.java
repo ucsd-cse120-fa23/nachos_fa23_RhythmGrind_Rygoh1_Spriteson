@@ -6,6 +6,7 @@ import nachos.userprog.*;
 import nachos.vm.*;
 
 import java.io.EOFException;
+import java.util.HashMap;
 
 /**
  * Encapsulates the state of a user process that is not contained in its user
@@ -26,6 +27,9 @@ public class UserProcess {
 	public UserProcess() {
 		int numPhysPages = Machine.processor().getNumPhysPages();
 		pageTable = new TranslationEntry[numPhysPages];
+		pid = UserKernel.pids++;
+		UserKernel.num_processes++;
+		System.out.println("new process created");
 		for (int i = 0; i < numPhysPages; i++)
 			pageTable[i] = new TranslationEntry(i, i, true, false, false, false);
 
@@ -432,9 +436,10 @@ public class UserProcess {
 	 */
 	private int handleHalt() {
 		Lib.debug(dbgProcess, "UserProcess.handleHalt");
-
+		if(pid != 0){
+			return -1;
+		}	
 		Machine.halt();
-
 		Lib.assertNotReached("Machine.halt() did not halt machine!");
 		return 0;
 	}
@@ -442,16 +447,36 @@ public class UserProcess {
 	/**
 	 * Handle the exit() system call.
 	 */
+	private int exitStatus;
+
 	private int handleExit(int status) {
-	        // Do not remove this call to the autoGrader...
+	    // Do not remove this call to the autoGrader...
 		Machine.autoGrader().finishingCurrentProcess(status);
 		// ...and leave it as the top of handleExit so that we
 		// can grade your implementation.
 
 		Lib.debug(dbgProcess, "UserProcess.handleExit (" + status + ")");
 		// for now, unconditionally terminate with just one process
-		Kernel.kernel.terminate();
-
+		for (int i = 0 ; i < fdSize; i++){
+			if (fdTable[i] != null) {
+				OpenFile toClear = fdTable[i];
+				toClear.close();
+				fdTable[i] = null;
+			}
+		}
+		exitStatus = status;
+		unloadSections();
+		coff.close();
+		System.out.println("removing process");
+		UserKernel.num_processes--;
+		System.out.println("num_process is");
+		System.out.println(UserKernel.num_processes);
+		if(UserKernel.num_processes == 0){
+			System.out.println("root process, terminating");
+			Kernel.kernel.terminate();
+		}
+		System.out.println("not root");
+		KThread.finish();
 		return 0;
 	}
 
@@ -663,6 +688,77 @@ public class UserProcess {
 		return -1;
 
 	}
+
+	private static HashMap<Integer, UserProcess> children = new HashMap<>();
+	private int pid;
+
+	private int handleExec(int fileNameaddr, int argc, int argv) {
+		if(argc < 0) {
+			System.out.println("arc < 0");
+			return -1;
+		}
+		if(fileNameaddr < 0){
+			System.out.println("bad address");
+			return -1;
+		}
+		String fileName = readVirtualMemoryString(fileNameaddr, 256);
+		if(fileName == null){
+			System.out.println("fileName is null");
+			return -1;
+		}
+
+		if(fileName.length() < 6 || !fileName.substring(fileName.length() - 5).equals(".coff")){
+			System.out.println("fileName is invalid");
+			return -1;
+		}
+		String[] args = new String[argc];
+		int argvloop = argv;
+		for (int i = 0; i < argc; i++){
+			args[i] = readVirtualMemoryString(argvloop, 256);
+			argvloop+=4;
+		}
+
+		UserProcess child = newUserProcess();
+		if(child.execute(fileName, args)){
+			children.put(child.pid, child);
+			System.out.println("Successful exec");
+			System.out.println("child pid is ");
+			System.out.println(child.pid);
+			return child.pid;
+		}
+		else{
+			System.out.println("Failed exec");
+			return -1;
+		}
+	}
+
+	private int handleJoin(int childPID, int status_addr){
+		System.out.println("child PID is");
+		System.out.println(childPID);
+		System.out.println(children.containsKey(childPID));
+		if(!children.containsKey(childPID)){
+			System.out.println("Not a child");
+			return -1;
+		}
+		UserProcess child = children.get(childPID);
+		child.thread.join();
+		children.remove(childPID);
+		int status = child.exitStatus;
+		if(status_addr < 0) {
+			System.out.println("status_addr is null");
+			return 1;
+		}
+		if(status == Integer.MIN_VALUE) {
+			System.out.println("Unhandled exception");
+			return 0;
+		}
+		byte[] toWrite = Lib.bytesFromInt(status);
+		writeVirtualMemory(status_addr, toWrite);
+		System.out.println("Successful join");
+		return 1;
+	}
+
+
 	/**
 	 * Handle a syscall exception. Called by <tt>handleException()</tt>. The
 	 * <i>syscall</i> argument identifies which syscall the user executed:
@@ -732,6 +828,10 @@ public class UserProcess {
 			return handleHalt();
 		case syscallExit:
 			return handleExit(a0);
+		case syscallExec:
+			return handleExec(a0,a1,a2);
+		case syscallJoin:
+			return handleJoin(a0,a1);
 		case syscallCreate:
             return handleCreat(a0);
         case syscallOpen:
@@ -810,9 +910,10 @@ public class UserProcess {
 	//file descritor table, 0 for stdin, 1 for stdout.
 	private OpenFile[] fdTable;
 
-
 	//local buffer with size of 1024
 	private static int bufferSize = 1024;
 
 	private byte[] localBuffer = new byte[bufferSize];
+
+	private UserProcess parent = null;
 }
