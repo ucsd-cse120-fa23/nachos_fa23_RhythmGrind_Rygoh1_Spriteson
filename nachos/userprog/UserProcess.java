@@ -748,7 +748,7 @@ public class UserProcess {
 			System.out.println("status_addr is null");
 			return 1;
 		}
-		if(status == Integer.MIN_VALUE) {
+		if(status < 0) {
 			System.out.println("Unhandled exception");
 			return 0;
 		}
@@ -864,7 +864,6 @@ public class UserProcess {
 	 */
 	public void handleException(int cause) {
 		Processor processor = Machine.processor();
-
 		switch (cause) {
 		case Processor.exceptionSyscall:
 			int result = handleSyscall(processor.readRegister(Processor.regV0),
@@ -875,8 +874,8 @@ public class UserProcess {
 			processor.writeRegister(Processor.regV0, result);
 			processor.advancePC();
 			break;
-
 		default:
+			System.out.println("found exception");
 			Lib.debug(dbgProcess, "Unexpected exception: "
 					+ Processor.exceptionNames[cause]);
 			Lib.assertNotReached("Unexpected exception");
