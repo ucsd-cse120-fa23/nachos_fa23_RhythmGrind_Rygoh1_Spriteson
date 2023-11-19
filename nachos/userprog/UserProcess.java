@@ -21,6 +21,25 @@ import java.util.HashMap;
  * @see nachos.network.NetProcess
  */
 public class UserProcess {
+	private class Pipe {
+        private String name;
+        private byte[] buffer;
+        private boolean isOpenForWriting;
+        private boolean isOpenForReading;
+
+        public Pipe(String name) {
+            this.name = name;
+            this.buffer = new byte[pageSize];
+            this.isOpenForWriting = true;
+            this.isOpenForReading = true;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+		
+    }
 	/**
 	 * Allocate a new process.
 	 */
@@ -503,6 +522,11 @@ public class UserProcess {
 		String fileName = readVirtualMemoryString(vaName, 256);
 		if (fileName == null)
 			return -1;
+
+		// Check if it's a request to open a named pipe
+		if (fileName.startsWith("/pipe/")) {
+			return createNamedPipe(fileName.substring(6));
+		}
 	
 		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, false);
 		if (fd == null)
@@ -516,11 +540,35 @@ public class UserProcess {
 		}
 		return -1;
 	}
+
+	private int openNamedPipe(String pipeName) {
+    	// Check if a pipe with the given name exists
+		for (int i = 0; i < MAX_PIPES; i++) {
+			if (pipeTable[i] != null && pipeTable[i].getName().equals(pipeName)) {
+				// Find an available file descriptor
+				for (int j = 2; j < fdSize; j++) {
+					if (fdTable[j] == null) {
+						OpenFile fd = ThreadedKernel.fileSystem.open(pipeName, false);
+						fdTable[j] = fd;
+						pipeTable[j] = pipeTable[i];
+						return j; // Return the file descriptor index
+					}
+				}
+				break; // No available file descriptor
+			}
+		}
+		return -1; // Named pipe not found
+	}
 	
 	private int handleCreat(int vaName) {
 		String fileName = readVirtualMemoryString(vaName, 256);
 		if (fileName == null)
 			return -1;
+
+		// Check if it's a request to create a named pipe
+		if (fileName.startsWith("/pipe/")) {
+			return createNamedPipe(fileName.substring(6));
+		}
 	
 		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, true);
 		if (fd == null)
@@ -533,6 +581,31 @@ public class UserProcess {
 			}
 		}
 		return -1;
+	}
+
+	private int createNamedPipe(String pipeName) {
+		// Check if a pipe with the same name already exists
+		for (int i = 0; i < MAX_PIPES; i++) {
+			if (pipeTable[i] != null && pipeTable[i].getName().equals(pipeName)) {
+				return -1; // Pipe already exists
+			}
+		}
+
+		// Find an available file descriptor
+		for (int j = 2; j < fdSize; j++) {
+			if (fdTable[j] == null) {
+				// Create a new Pipe and store it in the pipeTable
+				Pipe newPipe = new Pipe(pipeName);
+				pipeTable[j] = newPipe;
+
+				// Create a new OpenFile for the fdTable
+				OpenFile fd = ThreadedKernel.fileSystem.open(pipeName, true);
+				fdTable[j] = fd; // Store reference to the file in the file descriptor table
+				return j; // Return the file descriptor index
+			}
+		}
+
+		return -1; // No available file descriptor
 	}
 	
 
@@ -916,4 +989,8 @@ public class UserProcess {
 	private byte[] localBuffer = new byte[bufferSize];
 
 	private UserProcess parent = null;
+
+	//pipe buffer for ec
+	private static final int MAX_PIPES = 16;
+	private static Pipe[] pipeTable = new Pipe[MAX_PIPES];
 }
