@@ -137,6 +137,7 @@ public class UserProcess {
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data) {
 		return readVirtualMemory(vaddr, data, 0, data.length);
+		
 	}
 
 	/**
@@ -582,7 +583,7 @@ public class UserProcess {
 				break;
 	
 			int amountWritten = writeVirtualMemory(vaBuffer, localBuffer, 0, amountRead);
-			
+
 			if (amountWritten < 0) {
 				return -1; // Error in writing to virtual memory
 			} else if (amountWritten < amountRead) {
@@ -617,35 +618,45 @@ public class UserProcess {
 	 * if a network stream has already been terminated by the remote host.
 	 */
 	private int handleWrite(int fd, int vaBuffer, int count) {
-		//System.out.println("Entering handleWrite");
-		if (fd<0 || fd>=fdSize || count < 0)
+		if (fd < 0 || fd >= fdSize || count < 0) {
 			return -1;
-
-		OpenFile fileName = fdTable[fd];
-		if (fileName == null)
+		}
+	
+		OpenFile file = fdTable[fd];
+		if (file == null) {
 			return -1;
-
-		//loop untill all data is read
+		}
+	
 		int total = 0;
-		int maxTransferSize = bufferSize; // You can adjust this size
-
+		int maxTransferSize = bufferSize;
+	
 		while (count > 0) {
 			int transferSize = Math.min(count, maxTransferSize);
 			int amountRead = readVirtualMemory(vaBuffer, localBuffer, 0, transferSize);
 	
-			int amountWritten = fileName.write(localBuffer, 0, amountRead);
-			if (amountWritten <= 0)
-				return -1;
+			// Check for read error or invalid buffer
+			if (amountRead <= 0) {
+				return -1; 
+			}
+	
+			int amountWritten = file.write(localBuffer, 0, amountRead);
+			if (amountWritten < 0) {
+				return -1; // Write error
+			}
 	
 			total += amountWritten;
 			vaBuffer += amountWritten;
 			count -= amountWritten;
 	
-			if (amountWritten < transferSize) // Partial write, disk might be full
+			if (amountWritten < transferSize) {
+				// Handle partial writes
 				break;
+			}
 		}
+	
 		return total;
 	}
+	
 
 	/**
 	 * Close a file descriptor, so that it no longer refers to any file or
