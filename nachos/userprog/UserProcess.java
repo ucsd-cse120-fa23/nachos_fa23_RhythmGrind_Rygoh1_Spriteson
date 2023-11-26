@@ -582,8 +582,15 @@ public class UserProcess {
 				break;
 	
 			int amountWritten = writeVirtualMemory(vaBuffer, localBuffer, 0, amountRead);
-			if (amountWritten < amountRead) // Handle partial transfers
+			
+			if (amountWritten < 0) {
+				return -1; // Error in writing to virtual memory
+			} else if (amountWritten < amountRead) {
+				// Handle partial transfers
+				total += amountWritten;
 				break;
+			}
+	
 	
 			total += amountWritten;
 			vaBuffer += amountWritten;
