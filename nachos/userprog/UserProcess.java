@@ -155,8 +155,9 @@ public class UserProcess {
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
 
-		Lib.assertTrue(offset >= 0 && length >= 0
-				&& offset + length <= data.length);
+		if (data == null || offset < 0 || length < 0 || offset + length > data.length) {
+			return -1;
+		}
 
 		byte[] memory = Machine.processor().getMemory();
 
@@ -188,7 +189,7 @@ public class UserProcess {
 			length -= amount;
 			amountRead += amount;
 		}
-		
+
 		if (amountRead == 0) {
 			return -1;
 		}
