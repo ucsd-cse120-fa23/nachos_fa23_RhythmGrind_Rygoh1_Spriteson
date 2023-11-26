@@ -21,23 +21,6 @@ import java.util.HashMap;
  * @see nachos.network.NetProcess
  */
 public class UserProcess {
-	private class Pipe {
-        private String name;
-        private byte[] buffer;
-        private boolean isOpenForWriting;
-        private boolean isOpenForReading;
-
-        public Pipe(String name) {
-            this.name = name;
-            this.buffer = new byte[pageSize];
-            this.isOpenForWriting = true;
-            this.isOpenForReading = true;
-        }
-
-        public String getName() {
-            return name;
-        }
-	}
 	/**
 	 * Allocate a new process.
 	 */
@@ -520,13 +503,7 @@ public class UserProcess {
 		String fileName = readVirtualMemoryString(vaName, 256);
 		if (fileName == null)
 			return -1;
-
-		
-		// Check if it's a request to open a named pipe
-		if (fileName.startsWith("/pipe/")) {
-			return createNamedPipe(fileName.substring(6));
-		}
-
+	
 		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, false);
 		if (fd == null)
 			return -1;
@@ -539,34 +516,12 @@ public class UserProcess {
 		}
 		return -1;
 	}
-
-	private int openNamedPipe(String pipeName) {
-    	// Check if a pipe with the given name exists
-		for (int i = 0; i < MAX_PIPES; i++) {
-			if (pipeTable[i] != null && pipeTable[i].getName().equals(pipeName)) {
-				// Find an available file descriptor
-				for (int j = 2; j < fdSize; j++) {
-					if (fdTable[j] == null) {
-						OpenFile fd = ThreadedKernel.fileSystem.open(pipeName, false);
-						fdTable[j] = fd;
-						pipeTable[j] = pipeTable[i];
-						return j; // Return the file descriptor index
-					}
-				}
-				break; // No available file descriptor
-			}
-		}
-		return -1; // Named pipe not found
-	}
-
+	
 	private int handleCreat(int vaName) {
 		String fileName = readVirtualMemoryString(vaName, 256);
 		if (fileName == null)
 			return -1;
-		// Check if it's a request to create a named pipe
-		if (fileName.startsWith("/pipe/")) {
-			return createNamedPipe(fileName.substring(6));
-		}
+	
 		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, true);
 		if (fd == null)
 			return -1;
@@ -580,30 +535,7 @@ public class UserProcess {
 		return -1;
 	}
 	
-	private int createNamedPipe(String pipeName) {
-		// Check if a pipe with the same name already exists
-		for (int i = 0; i < MAX_PIPES; i++) {
-			if (pipeTable[i] != null && pipeTable[i].getName().equals(pipeName)) {
-				return -1; // Pipe already exists
-			}
-		}
 
-		// Find an available file descriptor
-		for (int j = 2; j < fdSize; j++) {
-			if (fdTable[j] == null) {
-				// Create a new Pipe and store it in the pipeTable
-				Pipe newPipe = new Pipe(pipeName);
-				pipeTable[j] = newPipe;
-
-				// Create a new OpenFile for the fdTable
-				OpenFile fd = ThreadedKernel.fileSystem.open(pipeName, true);
-				fdTable[j] = fd; // Store reference to the file in the file descriptor table
-				return j; // Return the file descriptor index
-			}
-		}
-
-		return -1; // No available file descriptor
-	}
 	/**
 	 * Attempt to read up to count bytes into buffer from the file or stream
 	 * referred to by fileDescriptor.
@@ -713,7 +645,7 @@ public class UserProcess {
 
 	private int handleClose(int fd) {
 		//System.out.println("Entering handleClose");
-		if (fd < 0 || fd > fdSize)
+		if (fd < 2 || fd >= fdSize)
 			return -1;
 
 		OpenFile thisFile = fdTable[fd];
@@ -760,45 +692,48 @@ public class UserProcess {
 	private static HashMap<Integer, UserProcess> children = new HashMap<>();
 	private int pid;
 
-	private int handleExec(int fileNameaddr, int argc, int argv) {
-		if(argc < 0) {
-			System.out.println("arc < 0");
+	private int handleExec(int fileNameAddr, int argc, int argv) {  
+
+		if (fileNameAddr < 0 || argc < 0) {
 			return -1;
 		}
-		if(fileNameaddr < 0){
+	
+		String fileName = readVirtualMemoryString(fileNameAddr, 256);
+	
+		if (fileNameAddr < 0) {
 			System.out.println("bad address");
 			return -1;
 		}
-		String fileName = readVirtualMemoryString(fileNameaddr, 256);
-		if(fileName == null){
+		if (fileName == null) {
 			System.out.println("fileName is null");
 			return -1;
 		}
-
-		if(fileName.length() < 6 || !fileName.substring(fileName.length() - 5).equals(".coff")){
+	
+		if (fileName.length() < 6 || !fileName.substring(fileName.length() - 5).equals(".coff")) {
 			System.out.println("fileName is invalid");
 			return -1;
 		}
+	
 		String[] args = new String[argc];
 		int argvloop = argv;
-		for (int i = 0; i < argc; i++){
+		for (int i = 0; i < argc; i++) {
 			args[i] = readVirtualMemoryString(argvloop, 256);
-			argvloop+=4;
+			argvloop += 4;
 		}
-
+	
 		UserProcess child = newUserProcess();
-		if(child.execute(fileName, args)){
+		if (child.execute(fileName, args)) {
 			children.put(child.pid, child);
 			System.out.println("Successful exec");
 			System.out.println("child pid is ");
 			System.out.println(child.pid);
 			return child.pid;
-		}
-		else{
+		} else {
 			System.out.println("Failed exec");
 			return -1;
 		}
 	}
+	
 
 	private int handleJoin(int childPID, int status_addr){
 		System.out.println("child PID is");
@@ -816,7 +751,7 @@ public class UserProcess {
 			System.out.println("status_addr is null");
 			return 1;
 		}
-		if(status < 0) {
+		if(status == Integer.MIN_VALUE) {
 			System.out.println("Unhandled exception");
 			return 0;
 		}
@@ -932,6 +867,7 @@ public class UserProcess {
 	 */
 	public void handleException(int cause) {
 		Processor processor = Machine.processor();
+
 		switch (cause) {
 		case Processor.exceptionSyscall:
 			int result = handleSyscall(processor.readRegister(Processor.regV0),
@@ -942,8 +878,8 @@ public class UserProcess {
 			processor.writeRegister(Processor.regV0, result);
 			processor.advancePC();
 			break;
+
 		default:
-			System.out.println("found exception");
 			Lib.debug(dbgProcess, "Unexpected exception: "
 					+ Processor.exceptionNames[cause]);
 			Lib.assertNotReached("Unexpected exception");
@@ -983,8 +919,4 @@ public class UserProcess {
 	private byte[] localBuffer = new byte[bufferSize];
 
 	private UserProcess parent = null;
-
-	//pipe buffer for ec
-	private static final int MAX_PIPES = 16;
-	private static Pipe[] pipeTable = new Pipe[MAX_PIPES];
 }
