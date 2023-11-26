@@ -529,7 +529,8 @@ public class UserProcess {
 		if (fd == null)
 			return -1;
 
-		for (int i = 2; i < fdSize; i++) {
+		// Start checking from file descriptor 0 to reuse closed stdin/stdout
+		for (int i = 0; i < fdSize; i++) {
 			if (fdTable[i] == null) {
 				fdTable[i] = fd;
 				return i;
@@ -627,7 +628,7 @@ public class UserProcess {
 		// System.out.println("Entering handleRead");
 		if (fd < 0 || fd >= fdSize || count < 0)
 			return -1;
-		
+
 		byte[] memory = Machine.processor().getMemory();
 		OpenFile fileName = fdTable[fd];
 		if (fileName == null)
@@ -724,7 +725,6 @@ public class UserProcess {
 		if (fd < 0 || fd >= fdSize) {
 			return -1;
 		}
-	
 
 		OpenFile thisFile = fdTable[fd];
 		if (thisFile == null)
@@ -781,20 +781,15 @@ public class UserProcess {
 			return -1;
 		}
 		String fileName = readVirtualMemoryString(fileNameaddr, 256);
-		if (fileName == null) {
-			System.out.println("fileName is null");
+
+		if (fileName == null || fileName.length() < 5 || !fileName.endsWith(".coff")) {
+			System.out.println("Error: Invalid or null file name");
 			return -1;
 		}
 
-		if (fileName.length() < 6 || !fileName.substring(fileName.length() - 5).equals(".coff")) {
-			System.out.println("fileName is invalid");
-			return -1;
-		}
 		String[] args = new String[argc];
 		int argvloop = argv;
 		for (int i = 0; i < argc; i++) {
-
-			// Read the address of the argument string from the argv array
 			byte[] argAddressBytes = new byte[4];
 			int bytesTransferred = readVirtualMemory(argvloop, argAddressBytes);
 			if (bytesTransferred != 4) {
