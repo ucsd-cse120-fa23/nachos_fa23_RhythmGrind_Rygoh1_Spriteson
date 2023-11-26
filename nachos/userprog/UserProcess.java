@@ -159,11 +159,12 @@ public class UserProcess {
 				&& offset + length <= data.length);
 
 		byte[] memory = Machine.processor().getMemory();
+
+		if (vaddr < 0 || vaddr >= memory.length || data == null) {
+			return -1;
+		}
 		int amountRead = 0;
 
-		// for now, just assume that virtual addresses equal physical addresses
-		// if (vaddr < 0 || vaddr >= memory.length)
-		// 	return 0;
 
 		// int amount = Math.min(length, memory.length - vaddr);
 		// System.arraycopy(memory, vaddr, data, offset, amount);
@@ -187,7 +188,10 @@ public class UserProcess {
 			length -= amount;
 			amountRead += amount;
 		}
-
+		
+		if (amountRead == 0) {
+			return -1;
+		}
 
 		//return amount;
 		return amountRead;
