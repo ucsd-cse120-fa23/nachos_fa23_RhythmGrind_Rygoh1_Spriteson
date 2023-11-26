@@ -59,7 +59,6 @@ public class UserProcess {
 		fdTable[1] = UserKernel.console.openForWriting();
 	}
 
-
 	/**
 	 * Allocate and return a new process of the correct class. The class name is
 	 * specified by the <tt>nachos.conf</tt> key
@@ -155,7 +154,6 @@ public class UserProcess {
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data) {
 		return readVirtualMemory(vaddr, data, 0, data.length);
-
 	}
 
 	/**
@@ -174,17 +172,15 @@ public class UserProcess {
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
 
-		if (data == null || offset < 0 || length < 0 || offset + length > data.length) {
-			return -1;
-		}
+		Lib.assertTrue(offset >= 0 && length >= 0
+				&& offset + length <= data.length);
 
 		byte[] memory = Machine.processor().getMemory();
-
-		if (vaddr < 0 || vaddr >= memory.length || data == null) {
-			return -1;
-		}
 		int amountRead = 0;
 
+		// for now, just assume that virtual addresses equal physical addresses
+		// if (vaddr < 0 || vaddr >= memory.length)
+		// 	return 0;
 
 		// int amount = Math.min(length, memory.length - vaddr);
 		// System.arraycopy(memory, vaddr, data, offset, amount);
@@ -209,9 +205,6 @@ public class UserProcess {
 			amountRead += amount;
 		}
 
-		if (amountRead == 0) {
-			return -1;
-		}
 
 		//return amount;
 		return amountRead;
@@ -527,7 +520,13 @@ public class UserProcess {
 		String fileName = readVirtualMemoryString(vaName, 256);
 		if (fileName == null)
 			return -1;
-	
+
+		
+		// Check if it's a request to open a named pipe
+		if (fileName.startsWith("/pipe/")) {
+			return createNamedPipe(fileName.substring(6));
+		}
+
 		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, false);
 		if (fd == null)
 			return -1;
@@ -540,12 +539,34 @@ public class UserProcess {
 		}
 		return -1;
 	}
-	
+
+	private int openNamedPipe(String pipeName) {
+    	// Check if a pipe with the given name exists
+		for (int i = 0; i < MAX_PIPES; i++) {
+			if (pipeTable[i] != null && pipeTable[i].getName().equals(pipeName)) {
+				// Find an available file descriptor
+				for (int j = 2; j < fdSize; j++) {
+					if (fdTable[j] == null) {
+						OpenFile fd = ThreadedKernel.fileSystem.open(pipeName, false);
+						fdTable[j] = fd;
+						pipeTable[j] = pipeTable[i];
+						return j; // Return the file descriptor index
+					}
+				}
+				break; // No available file descriptor
+			}
+		}
+		return -1; // Named pipe not found
+	}
+
 	private int handleCreat(int vaName) {
 		String fileName = readVirtualMemoryString(vaName, 256);
 		if (fileName == null)
 			return -1;
-	
+		// Check if it's a request to create a named pipe
+		if (fileName.startsWith("/pipe/")) {
+			return createNamedPipe(fileName.substring(6));
+		}
 		OpenFile fd = ThreadedKernel.fileSystem.open(fileName, true);
 		if (fd == null)
 			return -1;
@@ -559,7 +580,30 @@ public class UserProcess {
 		return -1;
 	}
 	
+	private int createNamedPipe(String pipeName) {
+		// Check if a pipe with the same name already exists
+		for (int i = 0; i < MAX_PIPES; i++) {
+			if (pipeTable[i] != null && pipeTable[i].getName().equals(pipeName)) {
+				return -1; // Pipe already exists
+			}
+		}
 
+		// Find an available file descriptor
+		for (int j = 2; j < fdSize; j++) {
+			if (fdTable[j] == null) {
+				// Create a new Pipe and store it in the pipeTable
+				Pipe newPipe = new Pipe(pipeName);
+				pipeTable[j] = newPipe;
+
+				// Create a new OpenFile for the fdTable
+				OpenFile fd = ThreadedKernel.fileSystem.open(pipeName, true);
+				fdTable[j] = fd; // Store reference to the file in the file descriptor table
+				return j; // Return the file descriptor index
+			}
+		}
+
+		return -1; // No available file descriptor
+	}
 	/**
 	 * Attempt to read up to count bytes into buffer from the file or stream
 	 * referred to by fileDescriptor.
@@ -601,15 +645,8 @@ public class UserProcess {
 				break;
 	
 			int amountWritten = writeVirtualMemory(vaBuffer, localBuffer, 0, amountRead);
-
-			if (amountWritten < 0) {
-				return -1; // Error in writing to virtual memory
-			} else if (amountWritten < amountRead) {
-				// Handle partial transfers
-				total += amountWritten;
+			if (amountWritten < amountRead) // Handle partial transfers
 				break;
-			}
-	
 	
 			total += amountWritten;
 			vaBuffer += amountWritten;
@@ -636,45 +673,35 @@ public class UserProcess {
 	 * if a network stream has already been terminated by the remote host.
 	 */
 	private int handleWrite(int fd, int vaBuffer, int count) {
-		if (fd < 0 || fd >= fdSize || count < 0) {
+		//System.out.println("Entering handleWrite");
+		if (fd<0 || fd>=fdSize || count < 0)
 			return -1;
-		}
-	
-		OpenFile file = fdTable[fd];
-		if (file == null) {
+
+		OpenFile fileName = fdTable[fd];
+		if (fileName == null)
 			return -1;
-		}
-	
+
+		//loop untill all data is read
 		int total = 0;
-		int maxTransferSize = bufferSize;
-	
+		int maxTransferSize = bufferSize; // You can adjust this size
+
 		while (count > 0) {
 			int transferSize = Math.min(count, maxTransferSize);
 			int amountRead = readVirtualMemory(vaBuffer, localBuffer, 0, transferSize);
 	
-			// Check for read error or invalid buffer
-			if (amountRead <= 0) {
-				return -1; 
-			}
-	
-			int amountWritten = file.write(localBuffer, 0, amountRead);
-			if (amountWritten < 0) {
-				return -1; // Write error
-			}
+			int amountWritten = fileName.write(localBuffer, 0, amountRead);
+			if (amountWritten <= 0)
+				return -1;
 	
 			total += amountWritten;
 			vaBuffer += amountWritten;
 			count -= amountWritten;
 	
-			if (amountWritten < transferSize) {
-				// Handle partial writes
+			if (amountWritten < transferSize) // Partial write, disk might be full
 				break;
-			}
 		}
-	
 		return total;
 	}
-	
 
 	/**
 	 * Close a file descriptor, so that it no longer refers to any file or
@@ -686,7 +713,7 @@ public class UserProcess {
 
 	private int handleClose(int fd) {
 		//System.out.println("Entering handleClose");
-		if (fd < 2 || fd >= fdSize)
+		if (fd < 0 || fd > fdSize)
 			return -1;
 
 		OpenFile thisFile = fdTable[fd];
@@ -733,48 +760,45 @@ public class UserProcess {
 	private static HashMap<Integer, UserProcess> children = new HashMap<>();
 	private int pid;
 
-	private int handleExec(int fileNameAddr, int argc, int argv) {  
-
-		if (fileNameAddr < 0 || argc < 0) {
+	private int handleExec(int fileNameaddr, int argc, int argv) {
+		if(argc < 0) {
+			System.out.println("arc < 0");
 			return -1;
 		}
-	
-		String fileName = readVirtualMemoryString(fileNameAddr, 256);
-	
-		if (fileNameAddr < 0) {
+		if(fileNameaddr < 0){
 			System.out.println("bad address");
 			return -1;
 		}
-		if (fileName == null) {
+		String fileName = readVirtualMemoryString(fileNameaddr, 256);
+		if(fileName == null){
 			System.out.println("fileName is null");
 			return -1;
 		}
-	
-		if (fileName.length() < 6 || !fileName.substring(fileName.length() - 5).equals(".coff")) {
+
+		if(fileName.length() < 6 || !fileName.substring(fileName.length() - 5).equals(".coff")){
 			System.out.println("fileName is invalid");
 			return -1;
 		}
-	
 		String[] args = new String[argc];
 		int argvloop = argv;
-		for (int i = 0; i < argc; i++) {
+		for (int i = 0; i < argc; i++){
 			args[i] = readVirtualMemoryString(argvloop, 256);
-			argvloop += 4;
+			argvloop+=4;
 		}
-	
+
 		UserProcess child = newUserProcess();
-		if (child.execute(fileName, args)) {
+		if(child.execute(fileName, args)){
 			children.put(child.pid, child);
 			System.out.println("Successful exec");
 			System.out.println("child pid is ");
 			System.out.println(child.pid);
 			return child.pid;
-		} else {
+		}
+		else{
 			System.out.println("Failed exec");
 			return -1;
 		}
 	}
-	
 
 	private int handleJoin(int childPID, int status_addr){
 		System.out.println("child PID is");
@@ -792,7 +816,7 @@ public class UserProcess {
 			System.out.println("status_addr is null");
 			return 1;
 		}
-		if(status == Integer.MIN_VALUE) {
+		if(status < 0) {
 			System.out.println("Unhandled exception");
 			return 0;
 		}
@@ -908,7 +932,6 @@ public class UserProcess {
 	 */
 	public void handleException(int cause) {
 		Processor processor = Machine.processor();
-
 		switch (cause) {
 		case Processor.exceptionSyscall:
 			int result = handleSyscall(processor.readRegister(Processor.regV0),
@@ -919,8 +942,8 @@ public class UserProcess {
 			processor.writeRegister(Processor.regV0, result);
 			processor.advancePC();
 			break;
-
 		default:
+			System.out.println("found exception");
 			Lib.debug(dbgProcess, "Unexpected exception: "
 					+ Processor.exceptionNames[cause]);
 			Lib.assertNotReached("Unexpected exception");
@@ -960,4 +983,8 @@ public class UserProcess {
 	private byte[] localBuffer = new byte[bufferSize];
 
 	private UserProcess parent = null;
+
+	//pipe buffer for ec
+	private static final int MAX_PIPES = 16;
+	private static Pipe[] pipeTable = new Pipe[MAX_PIPES];
 }
