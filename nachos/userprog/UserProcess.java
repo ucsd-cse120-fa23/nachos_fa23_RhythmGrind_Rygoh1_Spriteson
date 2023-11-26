@@ -21,6 +21,23 @@ import java.util.HashMap;
  * @see nachos.network.NetProcess
  */
 public class UserProcess {
+	private class Pipe {
+        private String name;
+        private byte[] buffer;
+        private boolean isOpenForWriting;
+        private boolean isOpenForReading;
+
+        public Pipe(String name) {
+            this.name = name;
+            this.buffer = new byte[pageSize];
+            this.isOpenForWriting = true;
+            this.isOpenForReading = true;
+        }
+
+        public String getName() {
+            return name;
+        }
+	}
 	/**
 	 * Allocate a new process.
 	 */
@@ -41,6 +58,7 @@ public class UserProcess {
 		fdTable[0] = UserKernel.console.openForReading();
 		fdTable[1] = UserKernel.console.openForWriting();
 	}
+
 
 	/**
 	 * Allocate and return a new process of the correct class. The class name is
@@ -137,7 +155,7 @@ public class UserProcess {
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data) {
 		return readVirtualMemory(vaddr, data, 0, data.length);
-		
+
 	}
 
 	/**
