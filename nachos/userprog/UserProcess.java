@@ -717,11 +717,14 @@ public class UserProcess {
 	private int handleClose(int fd) {
 		// System.out.println("Entering handleClose");
 		if (fd == 0 || fd == 1) {
-			return -1; // or return 0 if you want to allow closing but ignore the operation.
+			fdTable[fd] = null;
+			return 0;
 		}
 
-		if (fd < 0 || fd > fdSize)
+		if (fd < 0 || fd >= fdSize) {
 			return -1;
+		}
+	
 
 		OpenFile thisFile = fdTable[fd];
 		if (thisFile == null)
