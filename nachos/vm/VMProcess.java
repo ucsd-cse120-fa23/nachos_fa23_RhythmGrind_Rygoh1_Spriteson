@@ -51,9 +51,7 @@ public class VMProcess extends UserProcess {
 		for (int i = 0; i < numPages; i++) {
 			pageTable[i] = new TranslationEntry(i, i, false, false, false, false);
 		}
-		// load sections
 		return true;
-		// return super.loadSections();
 	}
 
 	/**
@@ -85,39 +83,52 @@ public class VMProcess extends UserProcess {
 
 
 	protected boolean handlePageFault(int badVaddr) {
-    pageTableLock.acquire();
-
-    int badVpn = Processor.pageFromAddress(badVaddr);
-    if (badVpn < 0 || badVpn >= pageTable.length) {
-        pageTableLock.release();
-        return false;
-    }
-
-    if (pageTable[badVpn].valid) {
+        System.out.println("VMProcess: Handling page fault for address " + badVaddr);
+        pageTableLock.acquire();
+    
+        int badVpn = Processor.pageFromAddress(badVaddr);
+        System.out.println("VMProcess: Calculated VPN for fault address: " + badVpn);
+    
+        if (badVpn < 0 || badVpn >= pageTable.length) {
+            System.out.println("VMProcess: Invalid VPN " + badVpn + ", releasing lock and returning false.");
+            pageTableLock.release();
+            return false;
+        }
+    
+        if (pageTable[badVpn].valid) {
+            System.out.println("VMProcess: Page " + badVpn + " already valid, releasing lock and returning true.");
+            pageTableLock.release();
+            return true;
+        }
+    
+        int ppn = VMKernel.allocatePage();
+        System.out.println("VMProcess: Allocated physical page number: " + ppn);
+    
+        if (ppn == -1) {
+            System.out.println("VMProcess: No free physical pages available, releasing lock and returning false.");
+            pageTableLock.release();
+            return false;
+        }
+    
+        if (!loadPageData(badVpn, ppn)) {
+            System.out.println("VMProcess: Failed to load page data for VPN " + badVpn + ", freeing page and releasing lock.");
+            VMKernel.freePage(ppn);
+            pageTableLock.release();
+            return false;
+        }
+    
+        pageTable[badVpn].valid = true;
+        pageTable[badVpn].ppn = ppn;
+        System.out.println("VMProcess: Page fault handled successfully for VPN " + badVpn);
+    
         pageTableLock.release();
         return true;
     }
-
-    int ppn = VMKernel.allocatePage();
-    if (ppn == -1) {
-        pageTableLock.release();
-        return false;
-    }
-
-    if (!loadPageData(badVpn, ppn)) {
-        VMKernel.freePage(ppn); // Ensure to free the page if loading fails
-        pageTableLock.release();
-        return false;
-    }
-
-    pageTable[badVpn].valid = true;
-    pageTable[badVpn].ppn = ppn;
-
-    pageTableLock.release();
-    return true;
-}
+    
 
 protected boolean loadPageData(int vpn, int ppn) {
+    System.out.println("VMProcess: Loading page data for VPN " + vpn + " into PPN " + ppn);
+
     // Check if the page is part of a COFF section
     boolean isCoffPage = false;
     for (int s = 0; s < coff.getNumSections(); s++) {
@@ -139,10 +150,6 @@ protected boolean loadPageData(int vpn, int ppn) {
 
     return true; // Assume successful load
 }
-
-
-
-
 
 	public int writeVirtualMemory(int vaddr, byte[] data, int offset, int length) {
     Lib.assertTrue(offset >= 0 && length >= 0 && offset + length <= data.length);
