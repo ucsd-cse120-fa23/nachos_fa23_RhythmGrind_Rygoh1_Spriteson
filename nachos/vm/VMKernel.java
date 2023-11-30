@@ -10,31 +10,88 @@ import java.util.LinkedList;
  * A kernel that can support multiple demand-paging user processes.
  */
 public class VMKernel extends UserKernel {
-	private static LinkedList<Integer> freePages;
-	private static OpenFile swapFile;
+    private static LinkedList<Integer> freePages;
+    private static OpenFile swapFile;
     private static LinkedList<Integer> freeSwapPages;
     private static Lock vmmutex;
+    private static int clockHand = 0; // Static variable to keep track of the clock hand position
+    private static boolean[] pageUsedStatus;
 
-	/**
-	 * Allocate a new VM kernel.
-	 */
-	public VMKernel() {
-		super();
-		System.out.println("VMKernel created.");
+    /**
+     * Allocate a new VM kernel.
+     */
+    public VMKernel() {
+        super();
+        System.out.println("VMKernel created.");
 
-	}
+    }
 
-	/**
-	 * Initialize this kernel.
-	 */
+    public static void acquireVMMutex() {
+        if (vmmutex == null) {
+            vmmutex = new Lock();
+        }
+        vmmutex.acquire();
+    }
+
+    public static void releaseVMMutex() {
+        if (vmmutex != null) {
+            vmmutex.release();
+        }
+    }
+
+    public static boolean isPhysicalMemoryFull() {
+        return freePages.isEmpty();
+    }
+    public static int selectVictimPage() {
+        int numPages = Machine.processor().getNumPhysPages();
+        for (int i = 0; i < numPages; i++) {
+            if (!pageUsedStatus[clockHand]) {
+                int victimPage = clockHand;
+                clockHand = (clockHand + 1) % numPages;
+                return victimPage;
+            }
+            pageUsedStatus[clockHand] = false;
+            clockHand = (clockHand + 1) % numPages;
+        }
+        return clockHand; // If all pages are used, return the current position
+    }
+
+
+    // This method writes the specified page to the swap file
+    public static void writeToSwap(int ppn) {
+        byte[] memory = Machine.processor().getMemory();
+        int startAddress = ppn * Machine.processor().pageSize;
+        byte[] pageData = new byte[Machine.processor().pageSize];
+        System.arraycopy(memory, startAddress, pageData, 0, Machine.processor().pageSize);
+    
+        int swapPageIndex = freeSwapPages.isEmpty() ? 
+            swapFile.length() / Machine.processor().pageSize :
+            freeSwapPages.removeFirst();
+    
+        swapFile.write(swapPageIndex * Machine.processor().pageSize, pageData, 0, Machine.processor().pageSize);
+    
+        // Debugging print statement
+        System.out.println("VMKernel: Wrote page " + ppn + " to swap slot " + swapPageIndex);
+    }
+    
+    
+
+
+    /**
+     * Initialize this kernel.
+     */
     public void initialize(String[] args) {
         super.initialize(args);
         freePages = new LinkedList<>();
+        vmmutex = new Lock();
 
         int numPhysPages = Machine.processor().getNumPhysPages();
+        pageUsedStatus = new boolean[numPhysPages];
+
         System.out.println("Initializing free pages list with " + numPhysPages + " pages.");
         for (int i = 0; i < numPhysPages; i++) {
             freePages.add(i);
+            pageUsedStatus[i] = false;
         }
 
         // Initialize swap file management
@@ -62,31 +119,31 @@ public class VMKernel extends UserKernel {
         System.out.println("VMKernel: Freed page " + pageNumber);
     }
 
-	/**
-	 * Test this kernel.
-	 */
-	public void selfTest() {
-		super.selfTest();
-	}
+    /**
+     * Test this kernel.
+     */
+    public void selfTest() {
+        super.selfTest();
+    }
 
-	/**
-	 * Start running user programs.
-	 */
-	public void run() {
-		super.run();
-	}
+    /**
+     * Start running user programs.
+     */
+    public void run() {
+        super.run();
+    }
 
-	/**
-	 * Terminate this kernel. Never returns.
-	 */
-	public void terminate() {
-		swapFile.close();
+    /**
+     * Terminate this kernel. Never returns.
+     */
+    public void terminate() {
+        swapFile.close();
         ThreadedKernel.fileSystem.remove("swapFile");
         super.terminate();
-	}
+    }
 
-	// dummy variables to make javac smarter
-	private static VMProcess dummy1 = null;
+    // dummy variables to make javac smarter
+    private static VMProcess dummy1 = null;
 
-	private static final char dbgVM = 'v';
+    private static final char dbgVM = 'v';
 }
