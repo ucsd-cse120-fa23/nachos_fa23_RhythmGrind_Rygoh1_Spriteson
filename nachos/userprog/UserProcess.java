@@ -137,7 +137,8 @@ public class UserProcess {
 
 		int bytesRead = readVirtualMemory(vaddr, bytes);
 
-		for (int length = 0; length < bytesRead; length++) {
+		// changed bytesRead+1
+		for (int length = 0; length < bytesRead+1; length++) {
 			if (bytes[length] == 0)
 				return new String(bytes, 0, length);
 		}

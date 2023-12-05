@@ -263,12 +263,15 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
                         return amountRead; // Return the amount read so far
 
         }
-        if (entry.readOnly) {
-            System.out.println("readVirtualMemory: Attempted to access read-only page at VPN " + vpn);
-            // break;
-                        return amountRead; // Return the amount read so far
+        
+        //changed!!! this cause hanld create return -1 when we try to call create in the test.
+        //either comment this out or handle it. create works well by comment this out.
+        // if (entry.readOnly) {
+        //     System.out.println("readVirtualMemory: Attempted to access read-only page at VPN " + vpn);
+        //     // break;
+        //                 return amountRead; // Return the amount read so far
 
-        }
+        // }
 
         int paddr = Processor.makeAddress(entry.ppn, pageOffset); // Physical address within the page
         System.out.println("Physical Address: " + paddr);
