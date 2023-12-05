@@ -263,7 +263,7 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
                         return amountRead; // Return the amount read so far
 
         }
-        
+
         //changed!!! this cause hanld create return -1 when we try to call create in the test.
         //either comment this out or handle it. create works well by comment this out.
         // if (entry.readOnly) {
@@ -291,6 +291,9 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
 
             // Check for null termination (byte with value 0)
             if (value == 0) {
+                //Found bug in here, when run write10, writing 4096 bytes to file, 4096 bytes at a time...
+                //it first return this 0 casue the error
+                System.out.println("-------------why only read0?????");
                 return amountRead + i; // Return the total amount read, including the null terminator
             }
         }
