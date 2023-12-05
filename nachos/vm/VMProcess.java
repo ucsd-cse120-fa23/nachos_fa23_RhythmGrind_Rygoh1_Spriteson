@@ -285,18 +285,19 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
 
         int amount = Math.min(length, Processor.pageSize - pageOffset); // Amount to read within the page
 
-        for (int i = 0; i < amount; i++) {
-            byte value = memory[paddr + i];
-            data[offset + i] = value;
+        //No need
+        // for (int i = 0; i < amount; i++) {
+        //     byte value = memory[paddr + i];
+        //     data[offset + i] = value;
 
-            // Check for null termination (byte with value 0)
-            if (value == 0) {
-                //Found bug in here, when run write10, writing 4096 bytes to file, 4096 bytes at a time...
-                //it first return this 0 casue the error
-                System.out.println("-------------why only read0?????");
-                return amountRead + i; // Return the total amount read, including the null terminator
-            }
-        }
+        //     // Check for null termination (byte with value 0)
+        //     if (value == 0) {
+        //         //Found bug in here, when run write10, writing 4096 bytes to file, 4096 bytes at a time...
+        //         //it first return this 0 casue the error
+        //         System.out.println("-------------why only read0?????");
+        //         return amountRead + i; // Return the total amount read, including the null terminator
+        //     }
+        // }
         try {
             System.arraycopy(memory, paddr, data, offset, amount);
         } catch (Exception e) {
