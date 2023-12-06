@@ -44,7 +44,7 @@ public class VMProcess extends UserProcess {
     protected boolean loadSections() {
         pageTable = new TranslationEntry[numPages];
         for (int i = 0; i < numPages; i++) {
-            pageTable[i] = new TranslationEntry(i, i, false, false, false, false);
+            pageTable[i] = new TranslationEntry(i, -1, false, false, false, false);
         }
         return true;
     }
@@ -143,7 +143,7 @@ public class VMProcess extends UserProcess {
 
     protected boolean loadPageData(int vpn, int ppn) {
         System.out.println("VMProcess: Loading page data for VPN " + vpn + " into PPN " + ppn);
-
+        
         // Check if the page is part of a COFF section
         boolean isCoffPage = false;
         for (int s = 0; s < coff.getNumSections(); s++) {
@@ -153,6 +153,7 @@ public class VMProcess extends UserProcess {
                 int coffPageIndex = vpn - section.getFirstVPN();
                 section.loadPage(coffPageIndex, ppn);
                 pageTable[vpn].readOnly = section.isReadOnly(); // Set readOnly flag here
+
                 break;
             }
         }
@@ -234,7 +235,6 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
         int pageOffset = Processor.offsetFromAddress(vaddr); // Offset within the page
 
         System.out.println("Processing VPN: " + vpn);
-
         if (vpn < 0 || vpn >= pageTable.length) {
             System.out.println("readVirtualMemory: Invalid VPN " + vpn + " at vaddr=" + vaddr);
             // break;
@@ -263,15 +263,12 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
                         return amountRead; // Return the amount read so far
 
         }
+        if (entry.readOnly) {
+            System.out.println("readVirtualMemory: Attempted to access read-only page at VPN " + vpn);
+            // break;
+            //return amountRead; // Return the amount read so far
 
-        //changed!!! this cause hanld create return -1 when we try to call create in the test.
-        //either comment this out or handle it. create works well by comment this out.
-        // if (entry.readOnly) {
-        //     System.out.println("readVirtualMemory: Attempted to access read-only page at VPN " + vpn);
-        //     // break;
-        //                 return amountRead; // Return the amount read so far
-
-        // }
+        }
 
         int paddr = Processor.makeAddress(entry.ppn, pageOffset); // Physical address within the page
         System.out.println("Physical Address: " + paddr);
@@ -279,23 +276,28 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
         if (paddr < 0 || paddr >= memory.length) {
             System.out.println("readVirtualMemory: Physical address out of bounds: " + paddr);
             // break;
-                        return amountRead; // Return the amount read so far
+            return amountRead; // Return the amount read so far
 
         }
 
         int amount = Math.min(length, Processor.pageSize - pageOffset); // Amount to read within the page
 
-        //No need
+        //NO need this
         // for (int i = 0; i < amount; i++) {
         //     byte value = memory[paddr + i];
         //     data[offset + i] = value;
 
         //     // Check for null termination (byte with value 0)
         //     if (value == 0) {
-        //         //Found bug in here, when run write10, writing 4096 bytes to file, 4096 bytes at a time...
-        //         //it first return this 0 casue the error
-        //         System.out.println("-------------why only read0?????");
-        //         return amountRead + i; // Return the total amount read, including the null terminator
+        //         System.out.println("||||||||||amount: "+amount);
+        //         if (i == 0)
+        //             i = amount;
+        //         //trying to read but the page has not content
+        //         else{
+        //             System.out.println("||||||||||amount: "+amount);
+        //             System.out.println("-------------why only read0?????");
+        //             return amountRead + i; // Return the total amount read, including the null terminator
+        //         }
         //     }
         // }
         try {
@@ -306,7 +308,7 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
                         return amountRead; // Return the amount read so far
 
         }
-
+        
         vaddr += amount;
         offset += amount;
         length -= amount;
@@ -319,7 +321,7 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
     if (amountRead == 0) {
         System.out.println("readVirtualMemory: No data read from vaddr=" + vaddr);
     }
-
+    System.out.println("DONE ON readVirtualMemory");
     return amountRead;
 }
 
