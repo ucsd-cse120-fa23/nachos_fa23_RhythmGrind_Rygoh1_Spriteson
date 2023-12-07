@@ -6,6 +6,7 @@ import nachos.userprog.*;
 import nachos.vm.*;
 import java.util.Arrays;
 /**
+ * 
  * A <tt>UserProcess</tt> that supports demand-paging.
  */
 public class VMProcess extends UserProcess {
@@ -92,37 +93,40 @@ public class VMProcess extends UserProcess {
         // Check if the page is already valid
         if (pageTable[badVpn].valid) {
             System.out.println("VMProcess: Page " + badVpn + " already valid, releasing lock and returning true.");
-
-
             VMKernel.releaseVMMutex();
             return true;
         }
 
         boolean physicalPageIsFull = VMKernel.isPhysicalMemoryFull();
-        int ppn;
+        int ppn=-1;
         if (physicalPageIsFull) {
             ppn = VMKernel.selectVictimPage(); // Find a page to evict
-            VMKernel.writeToSwap(ppn); // Swap out the page
-
-            // Update the page table entry for the evicted page
-            for (int i = 0; i < pageTable.length; i++) {
-                if (pageTable[i].ppn == ppn) {
-                    pageTable[i].valid = false;
+            TranslationEntry entryToEvict = null;
+            for (TranslationEntry entry : pageTable) {
+                if (entry.ppn == ppn && entry.valid) {
+                    entryToEvict = entry;
                     break;
                 }
+            }
+            if (entryToEvict != null) {
+                VMKernel.writeToSwap(ppn, entryToEvict); // Swap out the page if dirty
+                entryToEvict.valid = false; // Invalidate the evicted entry
+            } else {
+                VMKernel.releaseVMMutex();
+                return false; // Handle error if no valid page is found for eviction
             }
         } else {
             ppn = VMKernel.allocatePage();
             if (ppn == -1) {
-                // Handle case where allocatePage fails (shouldn't happen if memory is not full)
                 VMKernel.releaseVMMutex();
-                return false;
+                return false; // Handle allocation failure
             }
         }
 
+    // Check if ppn is valid before attempting to load page data
+    if (ppn != -1) {
         if (!loadPageData(badVpn, ppn)) {
-            System.out.println(
-                    "VMProcess: Failed to load page data for VPN " + badVpn + ", freeing page and releasing lock.");
+            System.out.println("VMProcess: Failed to load page data for VPN " + badVpn + ", freeing page and releasing lock.");
             VMKernel.freePage(ppn);
             VMKernel.releaseVMMutex();
             return false;
@@ -133,12 +137,14 @@ public class VMProcess extends UserProcess {
         pageTable[badVpn].used = true;
         pageTable[badVpn].dirty = false; // Set dirty to false initially
         System.out.println("VMProcess: Page fault handled successfully for VPN " + badVpn);
-
+    } else {
         VMKernel.releaseVMMutex();
-        System.out.println("handlePageFault: Page fault handled successfully for vaddr=" + badVaddr);
-
-        return true;
+        return false; // ppn is still -1, which is an error
     }
+
+    VMKernel.releaseVMMutex();
+    return true;
+}
 
 
     protected boolean loadPageData(int vpn, int ppn) {
@@ -179,12 +185,12 @@ public class VMProcess extends UserProcess {
         while (length > 0) {
             int vpn = Processor.pageFromAddress(vaddr);
             System.out.println("Processing VPN: " + vpn);
-            //changed, handle invalid vpn.
+
             if (!pageTable[vpn].valid){
                 handlePageFault(vaddr);
                 vpn = Processor.pageFromAddress(vaddr);
             }
-                
+            
             if (vpn < 0 || vpn >= pageTable.length ) {
                 System.out.println("vpn vs pageTable.length: " + vpn +" vs "+ pageTable.length);
                 System.out.println("Invalid or non-valid VPN: " + vpn);
@@ -193,6 +199,7 @@ public class VMProcess extends UserProcess {
 
             TranslationEntry entry = pageTable[vpn];
             System.out.println("Page Table Entry: " + entry);
+            entry.dirty = true;
 
             if (!entry.valid || entry.readOnly) {
                 System.out.println("Invalid entry or read-only page: " + entry);
@@ -226,8 +233,6 @@ public class VMProcess extends UserProcess {
     }
 
 
-
-
 public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
     Lib.assertTrue(offset >= 0 && length >= 0 && offset + length <= data.length);
 
@@ -243,9 +248,8 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
         System.out.println("Processing VPN: " + vpn);
         if (vpn < 0 || vpn >= pageTable.length) {
             System.out.println("readVirtualMemory: Invalid VPN " + vpn + " at vaddr=" + vaddr);
-            // break;
-            return amountRead; // Return the amount read so far
-
+            break;
+            //return amountRead; // Return the amount read so far
         }
 
         TranslationEntry entry = pageTable[vpn];
@@ -255,79 +259,36 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
             boolean pageFaultHandled = handlePageFault(vaddr);
             if (!pageFaultHandled) {
                 System.out.println("readVirtualMemory: Page fault handling failed at vaddr=" + vaddr);
-                // break;
-                return amountRead; // Return the amount read so far
-
+                break;
+                //return amountRead; // Return the amount read so far
             }
+
             entry = pageTable[vpn]; // Re-fetch the entry after handling page fault
             System.out.println("Page Table Entry after page fault: " + entry);
         }
 
-        if (!entry.valid) {
-            System.out.println("readVirtualMemory: Attempted to access invalid VPN " + vpn);
-            // break;
-                        return amountRead; // Return the amount read so far
+        if (entry.valid) {
+            int paddr = Processor.makeAddress(entry.ppn, Processor.offsetFromAddress(vaddr));
+            if (paddr < 0 || paddr >= memory.length) {
+                System.out.println("Physical address out of bounds: " + paddr);
+                break;  // Physical address out of bounds, break out of the loop
+            }
 
-        }
-        if (entry.readOnly) {
-            System.out.println("readVirtualMemory: Attempted to access read-only page at VPN " + vpn);
-            // break;
-            //return amountRead; // Return the amount read so far
-
-        }
-
-        int paddr = Processor.makeAddress(entry.ppn, pageOffset); // Physical address within the page
-        System.out.println("Physical Address: " + paddr);
-
-        if (paddr < 0 || paddr >= memory.length) {
-            System.out.println("readVirtualMemory: Physical address out of bounds: " + paddr);
-            // break;
-            return amountRead; // Return the amount read so far
-
-        }
-
-        int amount = Math.min(length, Processor.pageSize - pageOffset); // Amount to read within the page
-
-        //NO need this
-        // for (int i = 0; i < amount; i++) {
-        //     byte value = memory[paddr + i];
-        //     data[offset + i] = value;
-
-        //     // Check for null termination (byte with value 0)
-        //     if (value == 0) {
-        //         System.out.println("||||||||||amount: "+amount);
-        //         if (i == 0)
-        //             i = amount;
-        //         //trying to read but the page has not content
-        //         else{
-        //             System.out.println("||||||||||amount: "+amount);
-        //             System.out.println("-------------why only read0?????");
-        //             return amountRead + i; // Return the total amount read, including the null terminator
-        //         }
-        //     }
-        // }
-        try {
+            int amount = Math.min(length, Processor.pageSize - Processor.offsetFromAddress(vaddr));
             System.arraycopy(memory, paddr, data, offset, amount);
-        } catch (Exception e) {
-            System.out.println("readVirtualMemory: Error during memory copy: " + e.getMessage());
-            // break;
-                        return amountRead; // Return the amount read so far
 
+            vaddr += amount;
+            offset += amount;
+            length -= amount;
+            amountRead += amount;
+        } else {
+            System.out.println("Invalid access attempt to VPN: " + vpn);
+            break;  // Invalid access attempt, break out of the loop
         }
-        
-        vaddr += amount;
-        offset += amount;
-        length -= amount;
-        amountRead += amount;
-
-        System.out.println("Updated readVirtualMemory state: vaddr=" + vaddr + ", offset=" + offset
-                + ", remaining length=" + length + ", total amount read=" + amountRead);
     }
-
-    if (amountRead == 0) {
-        System.out.println("readVirtualMemory: No data read from vaddr=" + vaddr);
-    }
-    System.out.println("DONE ON readVirtualMemory");
+        if (amountRead == 0) {
+            System.out.println("No data read from vaddr=" + vaddr);
+        }
     return amountRead;
 }
 
