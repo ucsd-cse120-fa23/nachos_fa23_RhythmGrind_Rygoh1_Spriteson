@@ -5,6 +5,8 @@ import nachos.threads.*;
 import nachos.userprog.*;
 import nachos.vm.*;
 import java.util.LinkedList;
+import java.util.HashMap;
+
 
 /**
  * A kernel that can support multiple demand-paging user processes.
@@ -16,6 +18,8 @@ public class VMKernel extends UserKernel {
     private static Lock vmmutex;
     private static int clockHand = 0; // Static variable to keep track of the clock hand position
     private static boolean[] pageUsedStatus;
+    private static HashMap<Integer, Integer> vpnToSwapIndexMap = new HashMap<>();
+
 
     /**
      * Allocate a new VM kernel.
@@ -42,6 +46,8 @@ public class VMKernel extends UserKernel {
     public static boolean isPhysicalMemoryFull() {
         return freePages.isEmpty();
     }
+
+
     public static int selectVictimPage() {
         int numPages = Machine.processor().getNumPhysPages();
         for (int i = 0; i < numPages; i++) {
@@ -58,24 +64,29 @@ public class VMKernel extends UserKernel {
 
 
     // This method writes the specified page to the swap file
-    public static void writeToSwap(int ppn) {
+    public static void writeToSwap(int ppn, TranslationEntry entry) {
+        if (!entry.dirty) {
+            System.out.println("VMKernel: Page " + ppn + " not dirty, skipping swap write.");
+            return;
+        }
         byte[] memory = Machine.processor().getMemory();
         int startAddress = ppn * Machine.processor().pageSize;
         byte[] pageData = new byte[Machine.processor().pageSize];
         System.arraycopy(memory, startAddress, pageData, 0, Machine.processor().pageSize);
     
-        int swapPageIndex = freeSwapPages.isEmpty() ? 
-            swapFile.length() / Machine.processor().pageSize :
-            freeSwapPages.removeFirst();
-    
-        swapFile.write(swapPageIndex * Machine.processor().pageSize, pageData, 0, Machine.processor().pageSize);
-    
-        // Debugging print statement
-        System.out.println("VMKernel: Wrote page " + ppn + " to swap slot " + swapPageIndex);
-    }
-    
-    
+        int vpn = entry.vpn;
+        Integer swapPageIndex = vpnToSwapIndexMap.get(vpn);
 
+        if (swapPageIndex == null) {
+            // Allocate new swap page if this page was not previously swapped
+            swapPageIndex = freeSwapPages.isEmpty() ? swapFile.length() / Machine.processor().pageSize : freeSwapPages.removeFirst();
+            vpnToSwapIndexMap.put(vpn, swapPageIndex); // Update the map
+        }
+        swapFile.write(swapPageIndex * Machine.processor().pageSize, pageData, 0, Machine.processor().pageSize);
+        entry.dirty = false; // Reset the dirty bit after writing to swap
+        System.out.println("VMKernel: Wrote dirty page " + ppn + " to swap slot " + swapPageIndex);
+
+    }
 
     /**
      * Initialize this kernel.
