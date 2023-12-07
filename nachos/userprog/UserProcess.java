@@ -137,7 +137,7 @@ public class UserProcess {
 
 		int bytesRead = readVirtualMemory(vaddr, bytes);
 
-		
+		// changed bytesRead+1
 		for (int length = 0; length < bytesRead+1; length++) {
 			if (bytes[length] == 0)
 				return new String(bytes, 0, length);
@@ -155,8 +155,6 @@ public class UserProcess {
 	 * @return the number of bytes successfully transferred.
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data) {
-		//THIS RETUEN 0, ERROR!
-		System.out.println("--------"+data);
 		return readVirtualMemory(vaddr, data, 0, data.length);
 	}
 
@@ -175,13 +173,13 @@ public class UserProcess {
 	 * @return the number of bytes successfully transferred.
 	 */
 	public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
-		System.out.println("-------------------------------------");
+
 		Lib.assertTrue(offset >= 0 && length >= 0
 				&& offset + length <= data.length);
 
 		byte[] memory = Machine.processor().getMemory();
 		int amountRead = 0;
-		
+
 		// for now, just assume that virtual addresses equal physical addresses
 		// if (vaddr < 0 || vaddr >= memory.length)
 		// return 0;
@@ -563,8 +561,6 @@ public class UserProcess {
 
 	private int handleCreat(int vaName) {
 		String fileName = readVirtualMemoryString(vaName, 256);
-		System.out.println("-------INSIDE of handle Creat-------");
-		System.out.println("------------filename--------  "+ fileName);
 		if (fileName == null)
 			return -1;
 		// Check if it's a request to create a named pipe
@@ -682,15 +678,14 @@ public class UserProcess {
 	 * if a network stream has already been terminated by the remote host.
 	 */
 	private int handleWrite(int fd, int vaBuffer, int count) {
-		System.out.println("-----------Entering handleWrite");
+		// System.out.println("Entering handleWrite");
 		if (fd < 0 || fd >= fdSize || count < 0)
 			return -1;
-		
-		//System.out.println("----------Checking-----" + count);
+
 		OpenFile fileName = fdTable[fd];
 		if (fileName == null)
 			return -1;
-	
+
 		// loop untill all data is read
 		int total = 0;
 		int maxTransferSize = bufferSize; // You can adjust this size
@@ -698,18 +693,11 @@ public class UserProcess {
 		while (count > 0) {
 			int transferSize = Math.min(count, maxTransferSize);
 			int amountRead = readVirtualMemory(vaBuffer, localBuffer, 0, transferSize);
-			// System.out.println("-----------amountRead" + amountRead);
+
 			int amountWritten = fileName.write(localBuffer, 0, amountRead);
-			// System.out.println("-----------amountWrite" + amountWritten);
-			// System.out.println("-----------count" + count);
-			// System.out.println("-----------transferSize " + transferSize );
-			//ERROR HERE
-			if (amountWritten == 0){
-				System.out.println("-----------EXIT");
-				//if (total == 0)
+			if (amountWritten <= 0)
 				return -1;
-			}
-			
+
 			total += amountWritten;
 			vaBuffer += amountWritten;
 			count -= amountWritten;

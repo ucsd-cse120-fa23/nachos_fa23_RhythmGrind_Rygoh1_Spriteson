@@ -179,8 +179,14 @@ public class VMProcess extends UserProcess {
         while (length > 0) {
             int vpn = Processor.pageFromAddress(vaddr);
             System.out.println("Processing VPN: " + vpn);
-
-            if (vpn < 0 || vpn >= pageTable.length || !pageTable[vpn].valid) {
+            //changed, handle invalid vpn.
+            if (!pageTable[vpn].valid){
+                handlePageFault(vaddr);
+                vpn = Processor.pageFromAddress(vaddr);
+            }
+                
+            if (vpn < 0 || vpn >= pageTable.length ) {
+                System.out.println("vpn vs pageTable.length: " + vpn +" vs "+ pageTable.length);
                 System.out.println("Invalid or non-valid VPN: " + vpn);
                 break; // Invalid VPN or page not valid
             }
