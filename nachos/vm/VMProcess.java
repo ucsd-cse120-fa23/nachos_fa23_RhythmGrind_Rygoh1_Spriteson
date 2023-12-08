@@ -77,6 +77,25 @@ public class VMProcess extends UserProcess {
         }
     }
 
+
+    private boolean isPageInSwap(int vpn) {
+        Integer swapIndex = VMKernel.getSwapLocation(vpn);
+        return swapIndex != null;
+    }
+
+    private void loadPageFromSwap(int vpn, int ppn) {
+        Integer swapLocation = VMKernel.getSwapLocation(vpn);
+        if (swapLocation != null) {
+            byte[] memory = Machine.processor().getMemory();
+            int readSize = Machine.processor().pageSize;
+            int memoryOffset = ppn * readSize;
+
+            // Use the public method in VMKernel to read from the swap file
+            VMKernel.readFromSwapFile(swapLocation, memory, memoryOffset, readSize);
+        }
+    }
+
+
     protected boolean handlePageFault(int badVaddr) {
         int badVpn = Processor.pageFromAddress(badVaddr);
         System.out.println("VMProcess: Calculated VPN for fault address: " + badVpn);
@@ -97,6 +116,7 @@ public class VMProcess extends UserProcess {
             return true;
         }
 
+
         boolean physicalPageIsFull = VMKernel.isPhysicalMemoryFull();
         int ppn=-1;
         if (physicalPageIsFull) {
@@ -109,8 +129,10 @@ public class VMProcess extends UserProcess {
                 }
             }
             if (entryToEvict != null) {
-                VMKernel.writeToSwap(ppn, entryToEvict); // Swap out the page if dirty
-                entryToEvict.valid = false; // Invalidate the evicted entry
+                VMKernel.releaseVMMutex();
+                VMKernel.writeToSwap(ppn, entryToEvict);
+                VMKernel.acquireVMMutex();
+                entryToEvict.valid = false;
             } else {
                 VMKernel.releaseVMMutex();
                 return false; // Handle error if no valid page is found for eviction
@@ -119,23 +141,33 @@ public class VMProcess extends UserProcess {
             ppn = VMKernel.allocatePage();
             if (ppn == -1) {
                 VMKernel.releaseVMMutex();
-                return false; // Handle allocation failure
+                return false;
             }
         }
 
     // Check if ppn is valid before attempting to load page data
     if (ppn != -1) {
-        if (!loadPageData(badVpn, ppn)) {
-            System.out.println("VMProcess: Failed to load page data for VPN " + badVpn + ", freeing page and releasing lock.");
-            VMKernel.freePage(ppn);
+        VMKernel.pinPage(ppn);
+        if (isPageInSwap(badVpn)) {
+            Machine.incrNumSwapReads();
             VMKernel.releaseVMMutex();
-            return false;
+            loadPageFromSwap(badVpn, ppn);
+            VMKernel.acquireVMMutex();
         }
-
+        else{
+            if (!loadPageData(badVpn, ppn)) {
+                System.out.println("VMProcess: Failed to load page data for VPN " + badVpn + ", freeing page and releasing lock.");
+                VMKernel.freePage(ppn);
+                VMKernel.releaseVMMutex();
+                return false;
+            }
+        }
         pageTable[badVpn].valid = true;
         pageTable[badVpn].ppn = ppn;
         pageTable[badVpn].used = true;
-        pageTable[badVpn].dirty = false; // Set dirty to false initially
+        pageTable[badVpn].dirty = false;
+
+        VMKernel.unpinPage(ppn);
         System.out.println("VMProcess: Page fault handled successfully for VPN " + badVpn);
     } else {
         VMKernel.releaseVMMutex();
@@ -159,9 +191,11 @@ public class VMProcess extends UserProcess {
                 int coffPageIndex = vpn - section.getFirstVPN();
                 section.loadPage(coffPageIndex, ppn);
                 pageTable[vpn].readOnly = section.isReadOnly(); // Set readOnly flag here
-
                 break;
             }
+        }
+        if (isCoffPage) {
+            Machine.incrNumCOFFReads();
         }
         // If it's not a COFF page, zero-fill it
         if (!isCoffPage) {
@@ -194,7 +228,7 @@ public class VMProcess extends UserProcess {
             if (vpn < 0 || vpn >= pageTable.length ) {
                 System.out.println("vpn vs pageTable.length: " + vpn +" vs "+ pageTable.length);
                 System.out.println("Invalid or non-valid VPN: " + vpn);
-                break; // Invalid VPN or page not valid
+                break;
             }
 
             TranslationEntry entry = pageTable[vpn];
@@ -203,7 +237,7 @@ public class VMProcess extends UserProcess {
 
             if (!entry.valid || entry.readOnly) {
                 System.out.println("Invalid entry or read-only page: " + entry);
-                break; // Invalid entry or read-only page
+                break;
             }
 
             int ppn = entry.ppn;
@@ -212,7 +246,7 @@ public class VMProcess extends UserProcess {
 
             if (paddr < 0 || paddr >= memory.length) {
                 System.out.println("Physical address out of bounds: " + paddr);
-                break; // Physical address out of bounds
+                break;
             }
 
             int amount = Math.min(length, Processor.pageSize - Processor.offsetFromAddress(vaddr));
@@ -243,7 +277,7 @@ public int readVirtualMemory(int vaddr, byte[] data, int offset, int length) {
 
     while (length > 0) {
         int vpn = Processor.pageFromAddress(vaddr);
-        int pageOffset = Processor.offsetFromAddress(vaddr); // Offset within the page
+        int pageOffset = Processor.offsetFromAddress(vaddr);
 
         System.out.println("Processing VPN: " + vpn);
         if (vpn < 0 || vpn >= pageTable.length) {
