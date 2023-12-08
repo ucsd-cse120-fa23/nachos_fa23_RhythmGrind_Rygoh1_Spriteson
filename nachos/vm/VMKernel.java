@@ -16,9 +16,19 @@ public class VMKernel extends UserKernel {
     private static OpenFile swapFile;
     private static LinkedList<Integer> freeSwapPages;
     private static Lock vmmutex;
-    private static int clockHand = 0; // Static variable to keep track of the clock hand position
+    private static int clockHand = 0;
     private static boolean[] pageUsedStatus;
     private static HashMap<Integer, Integer> vpnToSwapIndexMap = new HashMap<>();
+    private static boolean[] isPagePinned;
+    private static Lock pinLock;
+    private static Condition pinCondition;
+
+    public static Integer getSwapLocation(int vpn) {
+        return vpnToSwapIndexMap.get(vpn);
+    }
+    public static void readFromSwapFile(int swapLocation, byte[] memory, int memoryOffset, int readSize) {
+        swapFile.read(swapLocation * readSize, memory, memoryOffset, readSize);
+    }
 
 
     /**
@@ -63,10 +73,10 @@ public class VMKernel extends UserKernel {
     }
 
 
-    // This method writes the specified page to the swap file
     public static void writeToSwap(int ppn, TranslationEntry entry) {
         if (!entry.dirty) {
             System.out.println("VMKernel: Page " + ppn + " not dirty, skipping swap write.");
+            Machine.incrNumSwapSkips();
             return;
         }
         byte[] memory = Machine.processor().getMemory();
@@ -80,12 +90,12 @@ public class VMKernel extends UserKernel {
         if (swapPageIndex == null) {
             // Allocate new swap page if this page was not previously swapped
             swapPageIndex = freeSwapPages.isEmpty() ? swapFile.length() / Machine.processor().pageSize : freeSwapPages.removeFirst();
-            vpnToSwapIndexMap.put(vpn, swapPageIndex); // Update the map
+            vpnToSwapIndexMap.put(vpn, swapPageIndex);
         }
         swapFile.write(swapPageIndex * Machine.processor().pageSize, pageData, 0, Machine.processor().pageSize);
-        entry.dirty = false; // Reset the dirty bit after writing to swap
+        entry.dirty = false;
         System.out.println("VMKernel: Wrote dirty page " + ppn + " to swap slot " + swapPageIndex);
-
+        Machine.incrNumSwapWrites();
     }
 
     /**
@@ -94,7 +104,6 @@ public class VMKernel extends UserKernel {
     public void initialize(String[] args) {
         super.initialize(args);
         freePages = new LinkedList<>();
-        vmmutex = new Lock();
 
         int numPhysPages = Machine.processor().getNumPhysPages();
         pageUsedStatus = new boolean[numPhysPages];
@@ -109,6 +118,28 @@ public class VMKernel extends UserKernel {
         swapFile = ThreadedKernel.fileSystem.open("swapFile", true);
         freeSwapPages = new LinkedList<Integer>();
         vmmutex = new Lock();
+        isPagePinned = new boolean[Machine.processor().getNumPhysPages()];
+        pinLock = new Lock();
+        pinCondition = new Condition(pinLock);
+    }
+
+
+
+    public static void pinPage(int ppn) {
+        pinLock.acquire();
+        isPagePinned[ppn] = true;
+        pinLock.release();
+    }
+
+    public static void unpinPage(int ppn) {
+        pinLock.acquire();
+        isPagePinned[ppn] = false;
+        pinCondition.wake(); // Wake up a thread waiting for a page to unpin
+        pinLock.release();
+    }
+
+    public static boolean isPagePinnable(int ppn) {
+        return !isPagePinned[ppn];
     }
 
     public static synchronized int allocatePage() {
