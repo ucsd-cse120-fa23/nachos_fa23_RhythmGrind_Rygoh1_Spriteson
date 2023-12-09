@@ -94,85 +94,75 @@ public class VMProcess extends UserProcess {
             VMKernel.readFromSwapFile(swapLocation, memory, memoryOffset, readSize);
         }
     }
+protected boolean handlePageFault(int badVaddr) {
+    int badVpn = Processor.pageFromAddress(badVaddr);
+    System.out.println("VMProcess: Calculated VPN for fault address: " + badVpn);
 
+    VMKernel.acquireVMMutex();
 
-    protected boolean handlePageFault(int badVaddr) {
-        int badVpn = Processor.pageFromAddress(badVaddr);
-        System.out.println("VMProcess: Calculated VPN for fault address: " + badVpn);
+    // Check for invalid VPN
+    if (badVpn < 0 || badVpn >= pageTable.length) {
+        System.out.println("VMProcess: Invalid VPN " + badVpn + ", releasing lock and returning false.");
+        VMKernel.releaseVMMutex();
+        return false;
+    }
 
-        VMKernel.acquireVMMutex();
+    // Check if the page is already valid
+    if (pageTable[badVpn].valid) {
+        System.out.println("VMProcess: Page " + badVpn + " already valid, releasing lock and returning true.");
+        VMKernel.releaseVMMutex();
+        return true;
+    }
 
-        // Check for invalid VPN
-        if (badVpn < 0 || badVpn >= pageTable.length) {
-            System.out.println("VMProcess: Invalid VPN " + badVpn + ", releasing lock and returning false.");
+    boolean physicalPageIsFull = VMKernel.isPhysicalMemoryFull();
+    int ppn = -1;
+
+    if (physicalPageIsFull) {
+        ppn = VMKernel.selectVictimPage(); // Find a page to evict
+        if (ppn < 0) {
+            System.out.println("VMProcess: No victim page found, memory is full.");
             VMKernel.releaseVMMutex();
             return false;
         }
 
-        // Check if the page is already valid
-        if (pageTable[badVpn].valid) {
-            System.out.println("VMProcess: Page " + badVpn + " already valid, releasing lock and returning true.");
-            VMKernel.releaseVMMutex();
-            return true;
-        }
-
-
-        boolean physicalPageIsFull = VMKernel.isPhysicalMemoryFull();
-        int ppn=-1;
-        if (physicalPageIsFull) {
-            ppn = VMKernel.selectVictimPage(); // Find a page to evict
-            TranslationEntry entryToEvict = null;
-            for (TranslationEntry entry : pageTable) {
-                if (entry.ppn == ppn && entry.valid) {
-                    entryToEvict = entry;
-                    break;
-                }
-            }
-            if (entryToEvict != null) {
-                VMKernel.releaseVMMutex();
+        // Evict page if necessary
+        TranslationEntry entryToEvict = pageTable[Processor.pageFromAddress(ppn)];
+        if (entryToEvict != null && entryToEvict.valid) {
+            if (entryToEvict.dirty) {
                 VMKernel.writeToSwap(ppn, entryToEvict);
-                VMKernel.acquireVMMutex();
-                entryToEvict.valid = false;
-            } else {
-                VMKernel.releaseVMMutex();
-                return false; // Handle error if no valid page is found for eviction
+                entryToEvict.dirty = false;
             }
-        } else {
-            ppn = VMKernel.allocatePage();
-            if (ppn == -1) {
-                VMKernel.releaseVMMutex();
-                return false;
-            }
+            entryToEvict.valid = false;
         }
-
-    // Check if ppn is valid before attempting to load page data
-    if (ppn != -1) {
-        VMKernel.pinPage(ppn);
-        if (isPageInSwap(badVpn)) {
-            Machine.incrNumSwapReads();
-            VMKernel.releaseVMMutex();
-            loadPageFromSwap(badVpn, ppn);
-            VMKernel.acquireVMMutex();
-        }
-        else{
-            if (!loadPageData(badVpn, ppn)) {
-                System.out.println("VMProcess: Failed to load page data for VPN " + badVpn + ", freeing page and releasing lock.");
-                VMKernel.freePage(ppn);
-                VMKernel.releaseVMMutex();
-                return false;
-            }
-        }
-        pageTable[badVpn].valid = true;
-        pageTable[badVpn].ppn = ppn;
-        pageTable[badVpn].used = true;
-        pageTable[badVpn].dirty = false;
-
-        VMKernel.unpinPage(ppn);
-        System.out.println("VMProcess: Page fault handled successfully for VPN " + badVpn);
     } else {
-        VMKernel.releaseVMMutex();
-        return false; // ppn is still -1, which is an error
+        ppn = VMKernel.allocatePage();
+        if (ppn < 0) {
+            System.out.println("VMProcess: Failed to allocate a new page.");
+            VMKernel.releaseVMMutex();
+            return false;
+        }
     }
+
+    // Load the page data
+    boolean loadedSuccessfully;
+    if (isPageInSwap(badVpn)) {
+        loadPageFromSwap(badVpn, ppn);
+        loadedSuccessfully = true; // Assuming loadPageFromSwap always succeeds, adjust based on actual logic
+    } else {
+        loadedSuccessfully = loadPageData(badVpn, ppn);
+    }
+    if (!loadedSuccessfully) {
+        System.out.println("VMProcess: Failed to load page data for VPN " + badVpn);
+        VMKernel.freePage(ppn);
+        VMKernel.releaseVMMutex();
+        return false;
+    }
+
+    // Update page table
+    pageTable[badVpn].valid = true;
+    pageTable[badVpn].ppn = ppn;
+    pageTable[badVpn].used = true;
+    pageTable[badVpn].dirty = false;
 
     VMKernel.releaseVMMutex();
     return true;
