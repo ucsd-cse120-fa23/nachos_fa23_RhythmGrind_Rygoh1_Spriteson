@@ -75,27 +75,32 @@ public class VMKernel extends UserKernel {
 
     public static void writeToSwap(int ppn, TranslationEntry entry) {
         if (!entry.dirty) {
+            acquireVMMutex();
             System.out.println("VMKernel: Page " + ppn + " not dirty, skipping swap write.");
             Machine.incrNumSwapSkips();
+            releaseVMMutex();
             return;
         }
+        acquireVMMutex();
         byte[] memory = Machine.processor().getMemory();
         int startAddress = ppn * Machine.processor().pageSize;
         byte[] pageData = new byte[Machine.processor().pageSize];
         System.arraycopy(memory, startAddress, pageData, 0, Machine.processor().pageSize);
-    
         int vpn = entry.vpn;
+        System.out.println("vpn is " + vpn);
         Integer swapPageIndex = vpnToSwapIndexMap.get(vpn);
-
         if (swapPageIndex == null) {
             // Allocate new swap page if this page was not previously swapped
+            System.out.println("freeswappages is empty is " + freeSwapPages.isEmpty());
             swapPageIndex = freeSwapPages.isEmpty() ? swapFile.length() / Machine.processor().pageSize : freeSwapPages.removeFirst();
+            System.out.println("swap slot is " + swapPageIndex);
             vpnToSwapIndexMap.put(vpn, swapPageIndex);
         }
         swapFile.write(swapPageIndex * Machine.processor().pageSize, pageData, 0, Machine.processor().pageSize);
         entry.dirty = false;
         System.out.println("VMKernel: Wrote dirty page " + ppn + " to swap slot " + swapPageIndex);
         Machine.incrNumSwapWrites();
+        releaseVMMutex();
     }
 
     /**

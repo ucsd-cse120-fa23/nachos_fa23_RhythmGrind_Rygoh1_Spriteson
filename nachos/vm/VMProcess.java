@@ -124,12 +124,14 @@ public class VMProcess extends UserProcess {
             TranslationEntry entryToEvict = null;
             for (TranslationEntry entry : pageTable) {
                 if (entry.ppn == ppn && entry.valid) {
+                    System.out.println("found a matching entry.ppn " + ppn);
                     entryToEvict = entry;
                     break;
                 }
             }
             if (entryToEvict != null) {
                 VMKernel.releaseVMMutex();
+                System.out.println("this section");
                 VMKernel.writeToSwap(ppn, entryToEvict);
                 VMKernel.acquireVMMutex();
                 entryToEvict.valid = false;
